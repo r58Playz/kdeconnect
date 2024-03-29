@@ -1,0 +1,9 @@
+Package: dev.r58playz.kdeconnectjb
+Name: kdeconnectjb
+Version: 0.0.1
+Architecture: iphoneos-arm
+Description: An awesome tool of some sort!!
+Maintainer: r58Playz
+Author: r58Playz
+Section: System
+Tag: role::hacker
