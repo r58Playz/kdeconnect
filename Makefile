@@ -1,9 +1,9 @@
 TARGET := iphone:clang:latest:15.0
 
 ifeq ($(FINALPACKAGE),1)
-$(shell cd rust; cargo b -r --target aarch64-apple-ios)
+$(shell cd rust; cargo b -r --target aarch64-apple-ios || exit 1)
 else
-$(shell cd rust; cargo b --target aarch64-apple-ios)
+$(shell cd rust; cargo b --target aarch64-apple-ios || exit 1)
 endif
 
 ARCHS = arm64
