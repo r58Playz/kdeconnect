@@ -11,7 +11,7 @@ pub trait ConfigProvider {
     async fn retrieve_server_keypair(&self) -> io::Result<Vec<u8>>;
     async fn store_server_cert(&self, cert: &[u8]) -> io::Result<()>;
     async fn retrieve_server_cert(&self) -> io::Result<Vec<u8>>;
-    async fn store_device_config(&self, config: DeviceConfig) -> io::Result<()>;
+    async fn store_device_config(&self, config: &DeviceConfig) -> io::Result<()>;
     async fn retrieve_device_config(&self, id: &str) -> io::Result<DeviceConfig>;
 }
 
@@ -55,10 +55,10 @@ impl ConfigProvider for FsConfig {
         tokio::fs::read(self.cert_path.clone()).await
     }
 
-    async fn store_device_config(&self, config: DeviceConfig) -> io::Result<()> {
-        File::create(self.path.join(config.id.clone()))
+    async fn store_device_config(&self, config: &DeviceConfig) -> io::Result<()> {
+        File::create(self.path.join(&config.id))
             .await?
-            .write_all(&json::to_vec(&config).map_err(io::Error::other)?)
+            .write_all(&json::to_vec(config).map_err(io::Error::other)?)
             .await
     }
 

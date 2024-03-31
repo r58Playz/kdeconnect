@@ -1,9 +1,9 @@
 TARGET := iphone:clang:latest:15.0
 
 ifeq ($(FINALPACKAGE),1)
-$(shell cd ../kdeconnect; cargo b -r --target aarch64-apple-ios || exit 1)
+$(shell cd ../kdeconnectjb; cargo b -r --target aarch64-apple-ios || exit 1)
 else
-$(shell cd ../kdeconnect; cargo b --target aarch64-apple-ios || exit 1)
+$(shell cd ../kdeconnectjb; cargo b --target aarch64-apple-ios || exit 1)
 endif
 
 ARCHS = arm64

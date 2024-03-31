@@ -94,3 +94,10 @@ macro_rules! make_packet {
         }
     };
 }
+
+#[macro_export]
+macro_rules! make_packet_str {
+    ($packet:ident) => {
+        serde_json::to_string(&make_packet!($packet)).map(|x| x + "\n")
+    };
+}
