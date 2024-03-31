@@ -37,14 +37,20 @@ int main(int argc, char *argv[], char *envp[]) {
             printf("usage: %s <device_name>\n", argv[0]);
             return 1;
         }
+
         KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
         NSString *deviceId = getDeviceId();
         if (!deviceId) {
-            printf("err: No device id\n");
+            printf("error: No device id\n");
             return 1;
         }
-        printf("device id: %s\n", [deviceId cStringUsingEncoding:NSUTF8StringEncoding]);
-        bool res = start_kdeconnect(
+
+        if (!kdeconnect_init()) {
+            printf("error: failed to init kdeconnect");
+            return 1;
+        }
+
+        bool res = kdeconnect_start(
             [deviceId cStringUsingEncoding:NSUTF8StringEncoding],
             argv[1],
             [KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding]

@@ -5,19 +5,16 @@ pub mod packets;
 mod util;
 
 use std::{
-    collections::HashMap,
-    error::Error,
-    io,
-    net::{Ipv4Addr, SocketAddrV4},
-    sync::Arc,
-    time::Duration,
+    collections::HashMap, io, net::{Ipv4Addr, SocketAddrV4}, sync::Arc, time::Duration
 };
 
 use config::ConfigProvider;
 use device::Device;
+use log::{debug, info};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use packets::{DeviceType, Identity, Packet, PacketType};
 use rcgen::KeyPair;
+use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream, UdpSocket},
@@ -44,6 +41,34 @@ use crate::{
     util::NoCertificateVerification,
 };
 
+#[derive(Error, Debug)]
+pub enum KdeConnectError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Mdns(#[from] mdns_sd::Error),
+    #[error(transparent)]
+    Rcgen(#[from] rcgen::Error),
+    #[error(transparent)]
+    Rustls(#[from] tokio_rustls::rustls::Error),
+    #[error(transparent)]
+    InvalidDnsName(#[from] tokio_rustls::rustls::pki_types::InvalidDnsNameError),
+    #[error(transparent)]
+    SerdeJson(#[from] serde_json::Error),
+    #[error("Channel send error")]
+    ChannelSendError,
+    #[error("No peer certificates")]
+    NoPeerCerts,
+}
+
+impl<T> From<mpsc::error::SendError<T>> for KdeConnectError {
+    fn from(_: mpsc::error::SendError<T>) -> Self {
+        Self::ChannelSendError
+    }
+}
+
+type Result<T> = std::result::Result<T, KdeConnectError>;
+
 const KDECONNECT_PORT: u16 = 1716;
 
 pub struct KdeConnect {
@@ -69,7 +94,7 @@ impl KdeConnect {
         device_name: String,
         device_type: DeviceType,
         config: Arc<dyn ConfigProvider + Sync + Send>,
-    ) -> Result<(Self, KdeConnectClient), Box<dyn Error + Sync + Send>> {
+    ) -> Result<(Self, KdeConnectClient)> {
         let udp_socket =
             UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, KDECONNECT_PORT)).await?;
         udp_socket.set_broadcast(true)?;
@@ -78,7 +103,7 @@ impl KdeConnect {
         let keypair = match config
             .retrieve_server_keypair()
             .await
-            .and_then(|x| KeyPair::try_from(x).map_err(io::Error::other))
+            .and_then(|x| KeyPair::try_from(x).map_err(|x| x.into()))
         {
             Ok(pair) => pair,
             Err(_) => {
@@ -121,6 +146,11 @@ impl KdeConnect {
 
         let (new_device_tx, new_device_rx) = mpsc::unbounded_channel();
 
+        info!(
+            "initialized kde connect device id: {:?} name: {:?} type: {:?}",
+            device_id, device_name, device_type
+        );
+
         Ok((
             Self {
                 device_id,
@@ -142,8 +172,9 @@ impl KdeConnect {
         ))
     }
 
-    pub async fn start_server(&self) -> Result<(), Box<dyn Error + Sync + Send>> {
+    pub async fn start_server(&self) -> Result<()> {
         let fullname = self.publish_mdns().await?;
+        info!("published mdns service");
         let ret = select! {
             x = self.listen_for_identity() => x,
             x = self.listen_on_tcp() => x,
@@ -151,6 +182,7 @@ impl KdeConnect {
             x = self.discover_mdns() => x,
         };
         self.mdns.unregister(&fullname)?;
+        info!("unpublished mdns service");
         ret
     }
 
@@ -167,9 +199,10 @@ impl KdeConnect {
         make_packet!(ident)
     }
 
-    async fn listen_on_tcp(&self) -> Result<(), Box<dyn Error + Sync + Send>> {
+    async fn listen_on_tcp(&self) -> Result<()> {
         let tcp_listener =
             TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, KDECONNECT_PORT)).await?;
+        info!("listening on tcp");
         while let Ok((stream, _)) = tcp_listener.accept().await {
             let mut stream = BufReader::new(stream);
             let mut identity = String::new();
@@ -183,7 +216,7 @@ impl KdeConnect {
                 .await
                 .contains(&identity.device_id)
             {
-                println!("ignoring reconnect");
+                debug!("ignoring reconnect from client {:?}", identity.device_id);
                 continue;
             }
 
@@ -203,6 +236,8 @@ impl KdeConnect {
                 .connect("r58playz.dev".try_into()?, stream)
                 .await?;
 
+            info!("new device via tcp: {:#?}", identity);
+
             let device = Device::new(
                 identity,
                 device_config,
@@ -217,20 +252,25 @@ impl KdeConnect {
         Ok(())
     }
 
-    async fn listen_for_identity(&self) -> Result<(), Box<dyn Error + Sync + Send>> {
+    async fn listen_for_identity(&self) -> Result<()> {
+        info!("listening on udp");
         loop {
             let mut buf = vec![0u8; 8192];
             let (len, mut addr) = self.udp_socket.recv_from(&mut buf).await?;
             let packet: Packet = json::from_slice(&buf[..len])?;
             if let Ok(identity) = json::from_value::<Identity>(packet.body)
                 && identity.device_id != self.device_id
-                && !self
+                && let Some(tcp_port) = identity.tcp_port
+            {
+                if self
                     .connected_clients
                     .lock()
                     .await
                     .contains(&identity.device_id)
-                && let Some(tcp_port) = identity.tcp_port
-            {
+                {
+                    debug!("ignoring reconnect from client {:?}", identity.device_id);
+                    continue;
+                }
                 addr.set_port(tcp_port);
 
                 self.connected_clients
@@ -252,6 +292,8 @@ impl KdeConnect {
                     .await
                     .ok();
 
+                info!("new device via udp: {:#?}", identity);
+
                 let device = Device::new(
                     identity,
                     device_config,
@@ -266,7 +308,8 @@ impl KdeConnect {
         }
     }
 
-    async fn send_identity(&self) -> Result<(), Box<dyn Error + Sync + Send>> {
+    async fn send_identity(&self) -> Result<()> {
+        info!("broadcasting on udp");
         loop {
             self.udp_socket
                 .send_to(
@@ -274,11 +317,12 @@ impl KdeConnect {
                     SocketAddrV4::new(Ipv4Addr::BROADCAST, KDECONNECT_PORT),
                 )
                 .await?;
+            debug!("broadcasted identity over udp");
             sleep(Duration::from_mins(1)).await;
         }
     }
 
-    async fn publish_mdns(&self) -> Result<String, Box<dyn Error + Sync + Send>> {
+    async fn publish_mdns(&self) -> Result<String> {
         let mut props = HashMap::new();
         props.insert("id".to_string(), self.device_id.clone());
         props.insert("name".to_string(), self.device_name.clone());
@@ -298,14 +342,15 @@ impl KdeConnect {
         Ok(fullname)
     }
 
-    async fn discover_mdns(&self) -> Result<(), Box<dyn Error + Sync + Send>> {
+    async fn discover_mdns(&self) -> Result<()> {
         let browser = self.mdns.browse("_kdeconnect._udp.local.")?;
         while let Ok(service) = browser.recv_async().await {
             if let ServiceEvent::ServiceResolved(info) = service
                 && let Some(id) = info.get_property_val_str("id")
                 && id != self.device_id
             {
-                println!("resolved kde connect: {:#?}", info);
+                info!("resolved kde connect: {:#?}", info);
+                // TODO should this also be hooked into the new device discovery?
             }
         }
         Ok(())

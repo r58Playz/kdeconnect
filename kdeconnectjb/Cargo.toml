@@ -2,12 +2,16 @@
 name = "kdeconnectjb"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [lib]
 crate-type = ["staticlib"]
 
 [dependencies]
 kdeconnect = { version = "0.1.0", path = "../kdeconnect" }
+log = { version = "0.4.21", features = ["std"] }
+oslog = "0.2.0"
+simplelog = "0.12.2"
 tokio = { version = "1.37.0", features = ["full"] }
 
 [build-dependencies]

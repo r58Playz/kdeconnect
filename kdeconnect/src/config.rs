@@ -1,18 +1,18 @@
-use crate::device::DeviceConfig;
+use crate::{device::DeviceConfig, Result};
 
 use async_trait::async_trait;
 use serde_json as json;
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 use tokio::{fs::File, io::AsyncWriteExt};
 
 #[async_trait]
 pub trait ConfigProvider {
-    async fn store_server_keypair(&self, cert: &[u8]) -> io::Result<()>;
-    async fn retrieve_server_keypair(&self) -> io::Result<Vec<u8>>;
-    async fn store_server_cert(&self, cert: &[u8]) -> io::Result<()>;
-    async fn retrieve_server_cert(&self) -> io::Result<Vec<u8>>;
-    async fn store_device_config(&self, config: &DeviceConfig) -> io::Result<()>;
-    async fn retrieve_device_config(&self, id: &str) -> io::Result<DeviceConfig>;
+    async fn store_server_keypair(&self, cert: &[u8]) -> Result<()>;
+    async fn retrieve_server_keypair(&self) -> Result<Vec<u8>>;
+    async fn store_server_cert(&self, cert: &[u8]) -> Result<()>;
+    async fn retrieve_server_cert(&self) -> Result<Vec<u8>>;
+    async fn store_device_config(&self, config: &DeviceConfig) -> Result<()>;
+    async fn retrieve_device_config(&self, id: &str) -> Result<DeviceConfig>;
 }
 
 pub struct FsConfig {
@@ -33,36 +33,38 @@ impl FsConfig {
 
 #[async_trait]
 impl ConfigProvider for FsConfig {
-    async fn store_server_keypair(&self, cert: &[u8]) -> io::Result<()> {
-        File::create(self.keypair_path.clone())
+    async fn store_server_keypair(&self, cert: &[u8]) -> Result<()> {
+        Ok(File::create(self.keypair_path.clone())
             .await?
             .write_all(cert)
-            .await
+            .await?)
     }
 
-    async fn retrieve_server_keypair(&self) -> io::Result<Vec<u8>> {
-        tokio::fs::read(self.keypair_path.clone()).await
+    async fn retrieve_server_keypair(&self) -> Result<Vec<u8>> {
+        Ok(tokio::fs::read(self.keypair_path.clone()).await?)
     }
 
-    async fn store_server_cert(&self, cert: &[u8]) -> io::Result<()> {
-        File::create(self.cert_path.clone())
+    async fn store_server_cert(&self, cert: &[u8]) -> Result<()> {
+        Ok(File::create(self.cert_path.clone())
             .await?
             .write_all(cert)
-            .await
+            .await?)
     }
 
-    async fn retrieve_server_cert(&self) -> io::Result<Vec<u8>> {
-        tokio::fs::read(self.cert_path.clone()).await
+    async fn retrieve_server_cert(&self) -> Result<Vec<u8>> {
+        Ok(tokio::fs::read(self.cert_path.clone()).await?)
     }
 
-    async fn store_device_config(&self, config: &DeviceConfig) -> io::Result<()> {
-        File::create(self.path.join(&config.id))
+    async fn store_device_config(&self, config: &DeviceConfig) -> Result<()> {
+        Ok(File::create(self.path.join(&config.id))
             .await?
-            .write_all(&json::to_vec(config).map_err(io::Error::other)?)
-            .await
+            .write_all(&json::to_vec(config)?)
+            .await?)
     }
 
-    async fn retrieve_device_config(&self, id: &str) -> io::Result<DeviceConfig> {
-        json::from_slice(&tokio::fs::read(self.path.join(id)).await?).map_err(io::Error::other)
+    async fn retrieve_device_config(&self, id: &str) -> Result<DeviceConfig> {
+        Ok(json::from_slice(
+            &tokio::fs::read(self.path.join(id)).await?,
+        )?)
     }
 }

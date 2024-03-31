@@ -11,6 +11,9 @@ use kdeconnect::{
     packets::DeviceType,
     KdeConnect,
 };
+use log::{info, warn, LevelFilter, Log};
+use oslog::OsLogger;
+use simplelog::{ColorChoice, CombinedLogger, Config, SharedLogger, TermLogger, TerminalMode};
 use tokio::runtime::{Builder, Runtime};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -36,15 +39,58 @@ struct KConnectIosHandler {}
 
 impl DeviceHandler for KConnectIosHandler {
     fn handle_pairing_request(&mut self, device: &Device) -> bool {
-        println!("oblivious pair accept: {:?}", device.config);
+        warn!("oblivious pair accept: {:?}", device.config);
         true
     }
+}
+
+struct IosLogWrapper(OsLogger, LevelFilter);
+
+impl Log for IosLogWrapper {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+    fn log(&self, record: &log::Record) {
+        self.0.log(record)
+    }
+    fn flush(&self) {
+        self.0.flush()
+    }
+}
+
+impl SharedLogger for IosLogWrapper {
+    fn level(&self) -> LevelFilter {
+        self.1
+    }
+
+    fn as_log(self: Box<Self>) -> Box<dyn Log> {
+        Box::new(self.0)
+    }
+
+    fn config(&self) -> Option<&simplelog::Config> {
+        None
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn kdeconnect_init() -> bool {
+    let oslog = IosLogWrapper(
+        OsLogger::new("dev.r58playz.kdeconnectjb").level_filter(LevelFilter::Debug),
+        LevelFilter::Debug,
+    );
+    let stdoutlog = TermLogger::new(
+        LevelFilter::Debug,
+        Config::default(),
+        TerminalMode::Stdout,
+        ColorChoice::Auto,
+    );
+    CombinedLogger::init(vec![Box::new(oslog), stdoutlog]).is_ok()
 }
 
 #[no_mangle]
 /// # Safety
 /// Safe if called with vaild C string pointers
-pub unsafe extern "C" fn start_kdeconnect(
+pub unsafe extern "C" fn kdeconnect_start(
     device_id: *const c_char,
     device_name: *const c_char,
     config_path: *const c_char,
@@ -65,9 +111,9 @@ pub unsafe extern "C" fn start_kdeconnect(
 
             tokio::spawn(async move { kdeconnect.start_server().await });
 
-            println!("discovering");
+            info!("discovering");
             while let Some(mut dev) = client.discover_devices().await {
-                println!(
+                info!(
                     "new device discovered: id {:?} name {:?} type {:?}",
                     dev.config.id, dev.config.name, dev.config.device_type
                 );
@@ -76,7 +122,7 @@ pub unsafe extern "C" fn start_kdeconnect(
 
             Ok::<(), Box<dyn Error + Sync + Send>>(())
         });
-        println!("ret {:?}", ret);
+        info!("runtime ret {:?}", ret);
 
         ret.is_ok()
     } else {

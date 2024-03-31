@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = kdeconnectjb
 
 kdeconnectjb_FILES = main.m
-kdeconnectjb_CFLAGS = -fobjc-arc -I../target/
+kdeconnectjb_CFLAGS = -fobjc-arc -I../kdeconnectjb/target/
 kdeconnectjb_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectjb_INSTALL_PATH = /usr/local/bin
 kdeconnectjb_LD_FLAGS = -lkdeconnectjb
