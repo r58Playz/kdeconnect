@@ -5,7 +5,11 @@ pub mod packets;
 mod util;
 
 use std::{
-    collections::HashMap, io, net::{Ipv4Addr, SocketAddrV4}, sync::Arc, time::Duration
+    collections::HashMap,
+    io,
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::Arc,
+    time::Duration,
 };
 
 use config::ConfigProvider;

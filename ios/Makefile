@@ -17,6 +17,9 @@ kdeconnectjb_CFLAGS = -fobjc-arc -I../kdeconnectjb/target/
 kdeconnectjb_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectjb_INSTALL_PATH = /usr/local/bin
 kdeconnectjb_LD_FLAGS = -lkdeconnectjb
+kdeconnectjb_LIBRARIES = MobileGestalt
+kdeconnectjb_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit
+kdeconnectjb_PRIVATE_FRAMEWORKS = AppSupport CoreTelephony
 ifeq ($(FINALPACKAGE),1)
 kdeconnectjb_OBJ_FILES = ../target/aarch64-apple-ios/release/libkdeconnectjb.a
 else
