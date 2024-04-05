@@ -4,33 +4,61 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf},
     net::TcpStream,
     select,
-    sync::Mutex,
+    sync::{mpsc, oneshot, Mutex},
 };
 use tokio_rustls::TlsStream;
 
 use crate::{
     config::ConfigProvider,
     make_packet, make_packet_str,
-    packets::{DeviceType, Identity, Packet, PacketType, Pair, Ping},
+    packets::{Battery, DeviceType, Identity, Packet, PacketType, Pair, Ping},
     KdeConnectError, Result,
 };
 
-pub struct Device {
-    pub config: DeviceConfig,
-    provider: Arc<dyn ConfigProvider + Sync + Send>,
-    stream: BufReader<TlsStream<BufReader<TcpStream>>>,
-    connected_clients: Arc<Mutex<Vec<String>>>,
+#[derive(Clone)]
+struct LockedDeviceWrite(Arc<Mutex<WriteHalf<TlsStream<BufReader<TcpStream>>>>>);
+
+impl LockedDeviceWrite {
+    fn new(stream: WriteHalf<TlsStream<BufReader<TcpStream>>>) -> Self {
+        Self(Arc::new(Mutex::new(stream)))
+    }
+
+    async fn send(&self, packet: String) -> std::io::Result<()> {
+        self.0.lock().await.write_all(packet.as_bytes()).await
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+pub struct Device {
+    pub config: DeviceConfig,
+    config_provider: Arc<dyn ConfigProvider + Sync + Send>,
+    connected_clients: Arc<Mutex<Vec<String>>>,
+
+    stream_r: Lines<BufReader<ReadHalf<TlsStream<BufReader<TcpStream>>>>>,
+    stream_w: LockedDeviceWrite,
+    stream_cert: Vec<u8>,
+
+    client_r: mpsc::UnboundedReceiver<DeviceAction>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DeviceConfig {
     pub id: String,
     pub name: String,
     pub device_type: DeviceType,
     pub certificate: Option<Vec<u8>>,
+}
+
+pub(crate) enum DeviceAction {
+    SendPacket(String, oneshot::Sender<Result<()>>),
+    GetConfig(oneshot::Sender<DeviceConfig>),
+}
+
+enum DeviceEvent {
+    Stream(String),
+    Client(DeviceAction),
 }
 
 impl Device {
@@ -41,28 +69,44 @@ impl Device {
     pub(crate) async fn new(
         identity: Identity,
         conf: Option<DeviceConfig>,
-        provider: Arc<dyn ConfigProvider + Sync + Send>,
+        config_provider: Arc<dyn ConfigProvider + Sync + Send>,
         stream: TlsStream<BufReader<TcpStream>>,
         connected_clients: Arc<Mutex<Vec<String>>>,
-    ) -> Self {
+        client_r: mpsc::UnboundedReceiver<DeviceAction>,
+    ) -> Result<Self> {
         let cert = conf.and_then(|x| x.certificate);
-        Self {
-            provider,
+
+        let stream_cert = stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .ok_or(KdeConnectError::NoPeerCerts)?[0]
+            .to_vec();
+
+        let (r, w) = split(stream);
+
+        Ok(Self {
             config: DeviceConfig {
                 id: identity.device_id,
                 name: identity.device_name,
                 device_type: identity.device_type,
                 certificate: cert,
             },
-            stream: BufReader::new(stream),
+
+            config_provider,
             connected_clients,
-        }
+
+            stream_r: BufReader::new(r).lines(),
+            stream_w: LockedDeviceWrite::new(w),
+            stream_cert,
+
+            client_r,
+        })
     }
 
-    pub async fn task(&mut self, handler: Box<dyn DeviceHandler + Sync + Send>) -> Result<()> {
-        let ret = select! {
-            x = self.tls_task(handler) => x,
-        };
+    pub async fn task(&mut self, mut handler: Box<dyn DeviceHandler + Sync + Send>) -> Result<()> {
+        self.send_paired_data(&mut handler).await?;
+        let ret = self.inner_task(handler).await;
         self.connected_clients
             .lock()
             .await
@@ -70,65 +114,138 @@ impl Device {
         ret
     }
 
-    async fn tls_task(&mut self, mut handler: Box<dyn DeviceHandler + Sync + Send>) -> Result<()> {
-        loop {
-            let mut buf = String::new();
-            self.stream.read_line(&mut buf).await?;
+    async fn send_paired_data(
+        &self,
+        handler: &mut Box<dyn DeviceHandler + Sync + Send>,
+    ) -> Result<()> {
+        if self.config.certificate.is_some() {
+            let battery = handler.get_battery(self).await;
+            self.stream_w.send(make_packet_str!(battery)?).await?;
+        }
+        Ok(())
+    }
 
-            let packet: Packet = json::from_str(&buf)?;
+    async fn inner_task(
+        &mut self,
+        mut handler: Box<dyn DeviceHandler + Sync + Send>,
+    ) -> Result<()> {
+        while let Some(evt) = select! {
+            x = self.stream_r.next_line() => x?.map(DeviceEvent::Stream),
+            x = self.client_r.recv() => x.map(DeviceEvent::Client),
+        } {
+            match evt {
+                DeviceEvent::Stream(buf) => {
+                    let packet: Packet = json::from_str(&buf)?;
 
-            match packet.packet_type.as_str() {
-                Ping::TYPE => {
-                    let body: Ping = json::from_value(packet.body)?;
-                    debug!("recieved ping: {:?}", body);
-                    self.stream
-                        .write_all(make_packet_str!(body)?.as_bytes())
-                        .await?;
-                }
-                Pair::TYPE => {
-                    let body: Pair = json::from_value(packet.body)?;
-                    if self.config.certificate.is_some() && !body.pair {
-                        // already paired and asking to unpair?
-                        self.config.certificate.take();
-                        let pair_packet = Pair { pair: false };
-                        self.stream
-                            .write_all(make_packet_str!(pair_packet)?.as_bytes())
-                            .await?;
-                        debug!("unpaired from {:?}", self.config.id);
-                    } else if self.config.certificate.is_none()
-                        && body.pair
-                        && handler.handle_pairing_request(self)
-                    {
-                        // unpaired and asking to pair?
-                        let tls_state = self.stream.get_ref().get_ref().1;
-                        self.config.certificate.replace(
-                            tls_state
-                                .peer_certificates()
-                                .ok_or(KdeConnectError::NoPeerCerts)?[0]
-                                .to_vec(),
-                        );
-                        let pair_packet = Pair { pair: true };
-                        self.stream
-                            .write_all(make_packet_str!(pair_packet)?.as_bytes())
-                            .await?;
-                        debug!("paired to {:?}", self.config.id);
-                    } else {
-                        // just forward it?
-                        self.stream
-                            .write_all(make_packet_str!(body)?.as_bytes())
-                            .await?;
+                    match packet.packet_type.as_str() {
+                        Ping::TYPE => {
+                            let body: Ping = json::from_value(packet.body)?;
+                            debug!("recieved ping: {:?}", body);
+                            handler.handle_ping(self, body.clone()).await;
+                            self.stream_w.send(make_packet_str!(body)?).await?;
+                        }
+                        Pair::TYPE => {
+                            let body: Pair = json::from_value(packet.body)?;
+                            if self.config.certificate.is_some() && !body.pair {
+                                // already paired and asking to unpair?
+                                self.config.certificate.take();
+                                let pair_packet = Pair { pair: false };
+                                self.stream_w.send(make_packet_str!(pair_packet)?).await?;
+                                debug!("unpaired from {:?}", self.config.id);
+                            } else if self.config.certificate.is_none() && body.pair {
+                                // unpaired and asking to pair?
+                                let should_pair = handler.handle_pairing_request(self).await;
+
+                                if should_pair {
+                                    self.config.certificate.replace(self.stream_cert.clone());
+                                }
+                                let pair_packet = Pair { pair: should_pair };
+                                self.stream_w.send(make_packet_str!(pair_packet)?).await?;
+
+                                self.send_paired_data(&mut handler).await?;
+
+                                debug!(
+                                    "{} pair request from {:?}",
+                                    if should_pair { "accepted" } else { "refused" },
+                                    self.config.id
+                                );
+                            } else {
+                                // just forward it?
+                                self.stream_w.send(make_packet_str!(body)?).await?;
+                            }
+                            self.config_provider
+                                .store_device_config(&self.config)
+                                .await?;
+                        }
+                        Battery::TYPE => {
+                            handler
+                                .handle_battery(self, json::from_value(packet.body)?)
+                                .await;
+                        }
+                        _ => error!(
+                            "unknown type {:?}, ignoring: {:#?}",
+                            packet.packet_type, packet.body
+                        ),
                     }
-                    self.provider.store_device_config(&self.config).await?;
                 }
-                _ => error!(
-                    "unknown type {:?}, ignoring: {:#?}",
-                    packet.packet_type, packet.body
-                ),
+                DeviceEvent::Client(action) => {
+                    use DeviceAction as A;
+                    match action {
+                        A::SendPacket(packet, response) => {
+                            let _ = response.send(
+                                self.stream_w
+                                    .send(packet)
+                                    .await
+                                    .map_err(KdeConnectError::from),
+                            );
+                        }
+                        A::GetConfig(response) => {
+                            let _ = response.send(self.config.clone());
+                        }
+                    }
+                }
             }
         }
+        Ok(())
     }
 }
 
+pub struct DeviceClient {
+    client_w: mpsc::UnboundedSender<DeviceAction>,
+}
+
+impl DeviceClient {
+    pub(crate) fn new(client_w: mpsc::UnboundedSender<DeviceAction>) -> Self {
+        Self { client_w }
+    }
+
+    async fn send_packet(&self, packet: String) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.client_w.send(DeviceAction::SendPacket(packet, tx))?;
+        rx.await?
+    }
+
+    pub async fn send_ping(&self, message: Option<String>) -> Result<()> {
+        let ping = Ping { message };
+        self.send_packet(make_packet_str!(ping)?).await
+    }
+
+    pub async fn send_battery_update(&self, packet: Battery) -> Result<()> {
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn get_config(&self) -> Result<DeviceConfig> {
+        let (tx, rx) = oneshot::channel();
+        self.client_w.send(DeviceAction::GetConfig(tx))?;
+        Ok(rx.await?)
+    }
+}
+
+#[async_trait::async_trait]
 pub trait DeviceHandler {
-    fn handle_pairing_request(&mut self, device: &Device) -> bool;
+    async fn handle_ping(&mut self, device: &Device, packet: Ping);
+    async fn handle_battery(&mut self, device: &Device, packet: Battery);
+    async fn handle_pairing_request(&mut self, device: &Device) -> bool;
+
+    async fn get_battery(&mut self, device: &Device) -> Battery;
 }

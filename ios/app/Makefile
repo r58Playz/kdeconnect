@@ -1,0 +1,12 @@
+TARGET = iphone:clang:latest:14.0
+INSTALL_TARGET_PROCESSES = kdeconnectjb
+
+ARCHS = arm64
+
+include $(THEOS)/makefiles/common.mk
+
+APPLICATION_NAME = kdeconnectjb
+
+kdeconnectjb_FILES = ContentView.swift kdeconnectjbApp.swift
+
+include $(THEOS_MAKE_PATH)/application.mk

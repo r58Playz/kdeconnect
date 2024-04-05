@@ -6,6 +6,7 @@ description = "Implementation of the KDE Connect protocol in Rust."
 
 [dependencies]
 async-trait = "0.1.79"
+local-ip-addr = "0.1.1"
 log = { version = "0.4.21", features = ["std"] }
 mdns-sd = { version = "0.10.5", default-features = false, features = ["async"] }
 rcgen = "0.13.0"
@@ -15,3 +16,4 @@ thiserror = "1.0.58"
 time = { version = "0.3.34", features = ["std"] }
 tokio = { version = "1.37.0", features = ["net", "sync", "fs", "io-util", "time", "macros"] }
 tokio-rustls = { version = "0.26.0", default-features = false, features = ["ring", "logging", "tls12"] }
+tokio-stream = "0.1.15"

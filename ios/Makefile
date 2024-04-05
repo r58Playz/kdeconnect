@@ -18,7 +18,7 @@ kdeconnectjb_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectjb_INSTALL_PATH = /usr/local/bin
 kdeconnectjb_LD_FLAGS = -lkdeconnectjb
 kdeconnectjb_LIBRARIES = MobileGestalt
-kdeconnectjb_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit
+kdeconnectjb_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit IOKit
 kdeconnectjb_PRIVATE_FRAMEWORKS = AppSupport CoreTelephony
 ifeq ($(FINALPACKAGE),1)
 kdeconnectjb_OBJ_FILES = ../target/aarch64-apple-ios/release/libkdeconnectjb.a
@@ -27,3 +27,5 @@ kdeconnectjb_OBJ_FILES = ../target/aarch64-apple-ios/debug/libkdeconnectjb.a
 endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
+SUBPROJECTS += app 
+include $(THEOS_MAKE_PATH)/aggregate.mk

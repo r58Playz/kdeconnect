@@ -3,7 +3,7 @@ use crate::{device::DeviceConfig, Result};
 use async_trait::async_trait;
 use serde_json as json;
 use std::path::PathBuf;
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::{fs::{create_dir_all, File}, io::AsyncWriteExt};
 
 #[async_trait]
 pub trait ConfigProvider {
@@ -22,12 +22,13 @@ pub struct FsConfig {
 }
 
 impl FsConfig {
-    pub fn new(path: PathBuf, cert_file_name: String, keypair_file_name: String) -> Self {
-        Self {
+    pub async fn new(path: PathBuf, cert_file_name: String, keypair_file_name: String) -> Result<Self> {
+        create_dir_all(&path).await?;
+        Ok(Self {
             cert_path: path.join(cert_file_name),
             keypair_path: path.join(keypair_file_name),
             path,
-        }
+        })
     }
 }
 
