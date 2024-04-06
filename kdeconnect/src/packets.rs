@@ -117,17 +117,26 @@ pub struct Battery {
 }
 derive_type!(Battery, "kdeconnect.battery");
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Clipboard {
+    pub content: String,
+}
+derive_type!(Clipboard, "kdeconnect.clipboard");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ClipboardConnect {
+    pub content: String,
+    pub timestamp: u128,
+}
+derive_type!(ClipboardConnect, "kdeconnect.clipboard.connect");
+
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway
 #[macro_export]
 macro_rules! make_packet {
     ($packet:ident) => {
         Packet {
-            id: std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .expect("time went backwards")
-                .as_millis()
-                .to_string(),
+            id: $crate::util::get_time_ms().to_string(),
             packet_type: $packet.get_type_self().to_string(),
             body: serde_json::value::to_value($packet).expect("packet was invalid"),
         }

@@ -131,3 +131,10 @@ impl ClientCertVerifier for NoCertificateVerification {
         Ok(ClientCertVerified::assertion())
     }
 }
+
+pub(crate) fn get_time_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_millis()
+}

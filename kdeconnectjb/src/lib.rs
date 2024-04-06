@@ -1,90 +1,43 @@
 #![feature(once_cell_try, trivial_bounds)]
 #[macro_use]
 mod utils;
+mod device;
 
 use std::{
     error::Error,
     io,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 
-use async_trait::async_trait;
-use kdeconnect::{
-    config::FsConfig,
-    device::{Device, DeviceClient, DeviceHandler},
-    packets::{Battery, DeviceType, Ping},
-    KdeConnect, KdeConnectClient, KdeConnectError,
+use device::{
+    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceState,
+    KConnectFfiDeviceType, KConnectHandler,
 };
+use kdeconnect::{
+    config::FsConfig, packets::Battery, KdeConnect, KdeConnectClient, KdeConnectError,
+};
+use log::info;
 #[cfg(target_os = "ios")]
 use log::LevelFilter;
-use log::{debug, info, warn};
 #[cfg(target_os = "ios")]
 use oslog::OsLogger;
 use safer_ffi::{boxed::Box_, ffi_export, prelude::*};
 #[cfg(target_os = "ios")]
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::{
-    io::{stdin, AsyncReadExt},
     runtime::{Builder, Runtime},
     sync::Mutex,
-    time::timeout,
 };
 use tokio_stream::StreamExt;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static STATE: Mutex<Option<KConnectState>> = Mutex::const_new(None);
 
-struct KConnectIosHandler(pub Arc<Mutex<KConnectDeviceState>>);
-
-#[async_trait]
-impl DeviceHandler for KConnectIosHandler {
-    async fn handle_ping(&mut self, device: &Device, packet: Ping) {
-        warn!(
-            "recieved ping: {:?} packet: {:#?}",
-            device.config.name, packet
-        );
-    }
-
-    async fn handle_battery(&mut self, device: &Device, packet: Battery) {
-        let mut state = self.0.lock().await;
-        state.battery_level.replace(packet.charge);
-        state.battery_charging.replace(packet.is_charging);
-        state
-            .battery_under_threshold
-            .replace(packet.under_threshold);
-        info!(
-            "recieved battery data: {:?} packet: {:#?}",
-            device.config.name, packet
-        );
-    }
-
-    async fn handle_pairing_request(&mut self, device: &Device) -> bool {
-        info!("recieved pair from {:?}", device.config);
-        let res = timeout(Duration::from_secs(5), stdin().read(&mut [0; 128]))
-            .await
-            .map_err(io::Error::other)
-            .and_then(|x| x)
-            .is_ok_and(|x| x > 0);
-        warn!(
-            "pair {} from {:?}",
-            if res { "accepted" } else { "rejected" },
-            device.config.name
-        );
-        res
-    }
-
-    async fn get_battery(&mut self, _: &Device) -> Battery {
-        debug!("requested battery data");
-        // STATE will always be Some here
-        STATE.lock().await.as_ref().unwrap().current_battery
-    }
-}
-
 struct KConnectState {
     client: KdeConnectClient,
     devices: Vec<KConnectDevice>,
     current_battery: Battery,
+    current_clipboard: String,
 }
 
 impl KConnectState {
@@ -97,71 +50,9 @@ impl KConnectState {
                 is_charging: false,
                 under_threshold: false,
             },
+            current_clipboard: String::new(),
         }
     }
-}
-
-#[derive(Default)]
-struct KConnectDeviceState {
-    battery_level: Option<i32>,
-    battery_charging: Option<bool>,
-    battery_under_threshold: Option<bool>,
-}
-
-struct KConnectDevice {
-    client: DeviceClient,
-    state: Arc<Mutex<KConnectDeviceState>>,
-}
-
-#[derive_ReprC]
-#[repr(u8)]
-pub enum KConnectFfiDeviceType {
-    Desktop,
-    Laptop,
-    Phone,
-    Tablet,
-    Tv,
-}
-
-impl From<DeviceType> for KConnectFfiDeviceType {
-    fn from(value: DeviceType) -> Self {
-        use DeviceType as D;
-        match value {
-            D::Desktop => Self::Desktop,
-            D::Laptop => Self::Laptop,
-            D::Phone => Self::Phone,
-            D::Tablet => Self::Tablet,
-            D::Tv => Self::Tv,
-        }
-    }
-}
-
-impl From<KConnectFfiDeviceType> for DeviceType {
-    fn from(value: KConnectFfiDeviceType) -> Self {
-        use KConnectFfiDeviceType as D;
-        match value {
-            D::Desktop => Self::Desktop,
-            D::Laptop => Self::Laptop,
-            D::Phone => Self::Phone,
-            D::Tablet => Self::Tablet,
-            D::Tv => Self::Tv,
-        }
-    }
-}
-
-#[derive_ReprC]
-#[repr(C)]
-pub struct KConnectFfiDevice {
-    id: char_p::Box,
-    name: char_p::Box,
-    dev_type: KConnectFfiDeviceType,
-    state: repr_c::Box<KConnectFfiDeviceState>,
-}
-
-#[derive_ReprC]
-#[repr(opaque)]
-pub struct KConnectFfiDeviceState {
-    pub(crate) state: Arc<Mutex<KConnectDeviceState>>,
 }
 
 #[ffi_export]
@@ -184,6 +75,8 @@ pub extern "C" fn kdeconnect_init() -> bool {
     false
 }
 
+/// TODO: move callbacks out of start and do something like kdeconnect_register_init_callback() etc
+///       will allow for more specific changed callbacks
 #[ffi_export]
 pub extern "C" fn kdeconnect_start(
     device_id: char_p::Ref<'_>,
@@ -192,6 +85,7 @@ pub extern "C" fn kdeconnect_start(
     config_path: char_p::Ref<'_>,
     initialized_callback: extern "C" fn() -> (),
     discovered_callback: extern "C" fn() -> (),
+    changed_callback: extern "C" fn(char_p::Box) -> (),
 ) -> bool {
     if let Ok(rt) = build_runtime!() {
         let ret = rt.block_on(async move {
@@ -234,7 +128,14 @@ pub extern "C" fn kdeconnect_start(
                     dev.config.id, dev.config.name, dev.config.device_type
                 );
                 let state = Arc::new(Mutex::new(KConnectDeviceState::default()));
-                let handler = Box::new(KConnectIosHandler(state.clone()));
+                let config = dev.config.clone();
+                // this closure is necessary
+                #[allow(clippy::redundant_closure)]
+                let handler = Box::new(KConnectHandler::new(
+                    state.clone(),
+                    dev.config.clone(),
+                    move |x| (changed_callback)(x),
+                ));
                 tokio::spawn(async move { dev.task(handler).await });
                 // STATE will always be Some
                 STATE
@@ -243,7 +144,11 @@ pub extern "C" fn kdeconnect_start(
                     .as_mut()
                     .unwrap()
                     .devices
-                    .push(KConnectDevice { client, state });
+                    .push(KConnectDevice {
+                        client,
+                        state,
+                        config,
+                    });
 
                 // this closure is necessary
                 #[allow(clippy::redundant_closure)]
@@ -258,6 +163,11 @@ pub extern "C" fn kdeconnect_start(
     } else {
         false
     }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_device_id(id: char_p::Box) {
+    drop(id)
 }
 
 #[ffi_export]
@@ -291,13 +201,12 @@ pub extern "C" fn kdeconnect_get_device_list() -> repr_c::Vec<KConnectFfiDevice>
             let mut out = Vec::new();
 
             for device in state.devices.iter() {
-                let config = device.client.get_config().await?;
                 out.push(KConnectFfiDevice {
-                    dev_type: config.device_type.into(),
+                    dev_type: device.config.device_type.into(),
                     // this should never fail
-                    id: config.id.try_into().unwrap(),
+                    id: device.config.id.clone().try_into().unwrap(),
                     // this should never fail
-                    name: config.name.try_into().unwrap(),
+                    name: device.config.name.clone().try_into().unwrap(),
                     state: Box_::new(KConnectFfiDeviceState {
                         state: device.state.clone(),
                     }),
@@ -328,14 +237,13 @@ pub extern "C" fn kdeconnect_get_device_by_id(id: char_p::Ref<'_>) -> *mut KConn
             let mut out = None;
 
             for device in state.devices.iter() {
-                let config = device.client.get_config().await?;
-                if config.id == id.to_str() {
+                if device.config.id == id.to_str() {
                     out.replace(KConnectFfiDevice {
-                        dev_type: config.device_type.into(),
+                        dev_type: device.config.device_type.into(),
                         // this should never fail
-                        id: config.id.try_into().unwrap(),
+                        id: device.config.id.clone().try_into().unwrap(),
                         // this should never fail
-                        name: config.name.try_into().unwrap(),
+                        name: device.config.name.clone().try_into().unwrap(),
                         state: Box_::new(KConnectFfiDeviceState {
                             state: device.state.clone(),
                         }),
@@ -408,8 +316,30 @@ pub extern "C" fn kdeconnect_device_get_battery_under_threshold(
 }
 
 #[ffi_export]
+pub extern "C" fn kdeconnect_device_get_clipboard_content(
+    device: &KConnectFfiDevice,
+) -> char_p::Box {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .state
+                .lock()
+                .await
+                .clipboard
+                .clone()
+                .unwrap_or("".to_string())
+        })
+        .try_into()
+        .unwrap()
+    } else {
+        "".to_string().try_into().unwrap()
+    }
+}
+
+#[ffi_export]
 pub extern "C" fn kdeconnect_on_battery_event(
-    level: f32,
+    level: i32,
     charging: i32,
     within_threshold: i32,
 ) -> bool {
@@ -421,7 +351,7 @@ pub extern "C" fn kdeconnect_on_battery_event(
     );
 
     let battery_state = Battery {
-        charge: level as i32,
+        charge: level,
         is_charging,
         under_threshold,
     };
@@ -433,6 +363,29 @@ pub extern "C" fn kdeconnect_on_battery_event(
             state.current_battery = battery_state;
             for device in state.devices.iter() {
                 device.client.send_battery_update(battery_state).await?;
+            }
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_on_clipboard_event(content: char_p::Box) -> bool {
+    info!("recieved clipboard data: {:?}", content);
+
+    let content = content.into_string();
+
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+            state.current_clipboard.clone_from(&content);
+
+            for device in state.devices.iter() {
+                device.client.send_clipboard_update(content.clone()).await?;
             }
             Ok::<(), KdeConnectError>(())
         })

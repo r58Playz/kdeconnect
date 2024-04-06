@@ -397,7 +397,7 @@ impl KdeConnect {
         info!("broadcasting on udp");
         loop {
             self.send_identity_once().await?;
-            sleep(Duration::from_mins(1)).await;
+            sleep(Duration::from_secs(30)).await;
         }
     }
 

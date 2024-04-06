@@ -1,3 +1,4 @@
+// vim: tabstop=2 shiftwidth=2
 #import "headers/IOPSKeys.h"
 #import "headers/IOPowerSources.h"
 #import "headers/MobileGestalt.h"
@@ -24,7 +25,7 @@ NSString *getDeviceId() {
 }
 
 typedef struct {
-  double level;
+  int level;
   int charging;
 } BatteryInfo;
 
@@ -49,39 +50,45 @@ bool getBatteryInfo(BatteryInfo *info) {
   info->level = 0.0f;
 
   info->charging = [dict[@"ExternalChargeCapable"] intValue];
-  info->level = [dict[@"CurrentCapacity"] intValue] / 100.0f;
+  info->level = [dict[@"CurrentCapacity"] intValue];
 
   return true;
 }
 
 void powerSourceCallback(void *context) {
-    BatteryInfo info = {.level = 0.0f, .charging = 0};
-    if (getBatteryInfo(&info)
-        && !kdeconnect_on_battery_event(
-            info.level,
-            info.charging,
-            IOPSGetBatteryWarningLevel() != kIOPSLowBatteryWarningNone)
-    ) {
-        NSLog(@"battery event failed");
-    }
+  BatteryInfo info = {.level = 0, .charging = 0};
+  if (getBatteryInfo(&info)
+      && !kdeconnect_on_battery_event(
+        info.level,
+        info.charging,
+        IOPSGetBatteryWarningLevel() != kIOPSLowBatteryWarningNone)
+  ) {
+    NSLog(@"battery event failed");
+  }
 }
 
 void initialized_callback() { powerSourceCallback(NULL); }
 
 void discovered_callback() {
-    NSLog(@"discovered");
-    Vec_KConnectFfiDevice_t vec = kdeconnect_get_device_list();
-    NSLog(@"got list");
-    for (int i = 0; i < vec.len; i++) {
-        KConnectFfiDevice_t device = vec.ptr[i];
-        NSLog(@"device name: %s id: %s batterylevel: %d", device.name, device.id, kdeconnect_device_get_battery_level(&device));
-        KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device.id);
-        if (device_by_id) {
-            NSLog(@"retrieved device by id: %s", device_by_id->name);
-            kdeconnect_free_device(device_by_id);
-        }
+  NSLog(@"discovered");
+  Vec_KConnectFfiDevice_t vec = kdeconnect_get_device_list();
+  NSLog(@"got list");
+  for (int i = 0; i < vec.len; i++) {
+    KConnectFfiDevice_t device = vec.ptr[i];
+    NSLog(@"device name: %s id: %s batterylevel: %d", device.name, device.id, kdeconnect_device_get_battery_level(&device));
+    KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device.id);
+    if (device_by_id) {
+      NSLog(@"retrieved device by id: %s", device_by_id->name);
+      kdeconnect_free_device(device_by_id);
     }
-    kdeconnect_free_device_list(vec);
+  }
+  kdeconnect_free_device_list(vec);
+}
+
+void changed_callback(char *id) {
+  NSLog(@"device id %s changed", id);
+  kdeconnect_free_device_id(id);
+  // TODO: Update clipboard here
 }
 
 int objc_main(int argc, char *argv[]) {
@@ -155,7 +162,8 @@ int objc_main(int argc, char *argv[]) {
           K_CONNECT_FFI_DEVICE_TYPE_PHONE,
           (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding],
           initialized_callback,
-          discovered_callback
+          discovered_callback,
+          changed_callback
       );
       NSLog(@"Ended OK: %d\n", res);
       exit(res);
@@ -163,6 +171,7 @@ int objc_main(int argc, char *argv[]) {
 
     [thread start];
 
+    // TODO: Subscribe to clipboard events and send those over
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);
     CFRunLoopAddSource(CFRunLoopGetMain(), powerLoop, kCFRunLoopDefaultMode);

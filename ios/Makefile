@@ -1,13 +1,5 @@
 TARGET := iphone:clang:latest:15.0
 
-ifeq ($(FINALPACKAGE),1)
-$(shell cd ../kdeconnectjb; cargo b -r --target aarch64-apple-ios || exit 1)
-else
-$(shell cd ../kdeconnectjb; cargo b --target aarch64-apple-ios || exit 1)
-endif
-
-$(shell cd ../kdeconnectjb; cargo r --bin generate-headers --features headers -- ../target/kdeconnectjb.h)
-
 ARCHS = arm64
 
 include $(THEOS)/makefiles/common.mk

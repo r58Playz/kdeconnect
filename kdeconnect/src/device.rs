@@ -14,7 +14,10 @@ use tokio_rustls::TlsStream;
 use crate::{
     config::ConfigProvider,
     make_packet, make_packet_str,
-    packets::{Battery, DeviceType, Identity, Packet, PacketType, Pair, Ping},
+    packets::{
+        Battery, Clipboard, ClipboardConnect, DeviceType, Identity, Packet, PacketType, Pair, Ping,
+    },
+    util::get_time_ms,
     KdeConnectError, Result,
 };
 
@@ -119,8 +122,17 @@ impl Device {
         handler: &mut Box<dyn DeviceHandler + Sync + Send>,
     ) -> Result<()> {
         if self.config.certificate.is_some() {
-            let battery = handler.get_battery(self).await;
+            let battery = handler.get_battery().await;
             self.stream_w.send(make_packet_str!(battery)?).await?;
+
+            let clipboard = ClipboardConnect {
+                content: handler.get_clipboard_content().await,
+                // TODO: Do we want to ask handler for clipboard last updated? timestamp seems to
+                // be last updated according to:
+                // https://invent.kde.org/network/kdeconnect-android/-/blob/master/src/org/kde/kdeconnect/Plugins/ClibpoardPlugin/ClipboardPlugin.java?ref_type=heads#L78
+                timestamp: get_time_ms(),
+            };
+            self.stream_w.send(make_packet_str!(clipboard)?).await?;
         }
         Ok(())
     }
@@ -141,7 +153,7 @@ impl Device {
                         Ping::TYPE => {
                             let body: Ping = json::from_value(packet.body)?;
                             debug!("recieved ping: {:?}", body);
-                            handler.handle_ping(self, body.clone()).await;
+                            handler.handle_ping(body.clone()).await;
                             self.stream_w.send(make_packet_str!(body)?).await?;
                         }
                         Pair::TYPE => {
@@ -154,7 +166,7 @@ impl Device {
                                 debug!("unpaired from {:?}", self.config.id);
                             } else if self.config.certificate.is_none() && body.pair {
                                 // unpaired and asking to pair?
-                                let should_pair = handler.handle_pairing_request(self).await;
+                                let should_pair = handler.handle_pairing_request().await;
 
                                 if should_pair {
                                     self.config.certificate.replace(self.stream_cert.clone());
@@ -178,9 +190,17 @@ impl Device {
                                 .await?;
                         }
                         Battery::TYPE => {
-                            handler
-                                .handle_battery(self, json::from_value(packet.body)?)
-                                .await;
+                            handler.handle_battery(json::from_value(packet.body)?).await;
+                        }
+                        Clipboard::TYPE => {
+                            let clipboard: Clipboard = json::from_value(packet.body)?;
+                            handler.handle_clipboard_content(clipboard.content).await;
+                        }
+                        ClipboardConnect::TYPE => {
+                            let connect: ClipboardConnect = json::from_value(packet.body)?;
+                            if connect.timestamp != 0 {
+                                handler.handle_clipboard_content(connect.content).await;
+                            }
                         }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
@@ -234,6 +254,11 @@ impl DeviceClient {
         self.send_packet(make_packet_str!(packet)?).await
     }
 
+    pub async fn send_clipboard_update(&self, content: String) -> Result<()> {
+        let packet = Clipboard { content };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
     pub async fn get_config(&self) -> Result<DeviceConfig> {
         let (tx, rx) = oneshot::channel();
         self.client_w.send(DeviceAction::GetConfig(tx))?;
@@ -243,9 +268,12 @@ impl DeviceClient {
 
 #[async_trait::async_trait]
 pub trait DeviceHandler {
-    async fn handle_ping(&mut self, device: &Device, packet: Ping);
-    async fn handle_battery(&mut self, device: &Device, packet: Battery);
-    async fn handle_pairing_request(&mut self, device: &Device) -> bool;
+    async fn handle_ping(&mut self, packet: Ping);
+    async fn handle_battery(&mut self, packet: Battery);
+    async fn handle_clipboard_content(&mut self, content: String);
 
-    async fn get_battery(&mut self, device: &Device) -> Battery;
+    async fn handle_pairing_request(&mut self) -> bool;
+
+    async fn get_battery(&mut self) -> Battery;
+    async fn get_clipboard_content(&mut self) -> String;
 }
