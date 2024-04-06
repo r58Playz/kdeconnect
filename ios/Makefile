@@ -6,6 +6,8 @@ else
 $(shell cd ../kdeconnectjb; cargo b --target aarch64-apple-ios || exit 1)
 endif
 
+$(shell cd ../kdeconnectjb; cargo r --bin generate-headers --features headers -- ../target/kdeconnectjb.h)
+
 ARCHS = arm64
 
 include $(THEOS)/makefiles/common.mk
@@ -13,7 +15,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = kdeconnectd
 
 kdeconnectd_FILES = $(wildcard *.m) $(wildcard *.swift)
-kdeconnectd_CFLAGS = -fobjc-arc -I../kdeconnectjb/target/
+kdeconnectd_CFLAGS = -fobjc-arc -I../target/
 kdeconnectd_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectd_INSTALL_PATH = /usr/local/bin
 kdeconnectd_LD_FLAGS = -lkdeconnectjb

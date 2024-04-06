@@ -1,9 +1,14 @@
+#[cfg(target_os = "ios")]
 use log::{LevelFilter, Log};
-use oslog::OsLogger;
+#[cfg(target_os = "ios")]
 use simplelog::SharedLogger;
+#[cfg(target_os = "ios")]
+use oslog::OsLogger;
 
+#[cfg(target_os = "ios")]
 pub struct IosLogWrapper(pub OsLogger, pub LevelFilter);
 
+#[cfg(target_os = "ios")]
 impl Log for IosLogWrapper {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         self.0.enabled(metadata)
@@ -16,6 +21,7 @@ impl Log for IosLogWrapper {
     }
 }
 
+#[cfg(target_os = "ios")]
 impl SharedLogger for IosLogWrapper {
     fn level(&self) -> LevelFilter {
         self.1
@@ -34,18 +40,6 @@ impl SharedLogger for IosLogWrapper {
 macro_rules! build_runtime {
     () => {
         RUNTIME.get_or_try_init(|| Builder::new_multi_thread().enable_all().build())
-    };
-}
-
-#[macro_export]
-macro_rules! check_str {
-    ($var:ident) => {
-        let $var = unsafe {
-            if $var.is_null() {
-                return false;
-            }
-            CStr::from_ptr($var).to_string_lossy().to_string()
-        };
     };
 }
 

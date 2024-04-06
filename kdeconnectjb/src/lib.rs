@@ -1,10 +1,9 @@
-#![feature(once_cell_try)]
+#![feature(once_cell_try, trivial_bounds)]
 #[macro_use]
 mod utils;
 
 use std::{
     error::Error,
-    ffi::{c_char, c_double, c_int, CStr},
     io,
     sync::{Arc, OnceLock},
     time::Duration,
@@ -17,8 +16,13 @@ use kdeconnect::{
     packets::{Battery, DeviceType, Ping},
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
-use log::{debug, info, warn, LevelFilter};
+#[cfg(target_os = "ios")]
+use log::LevelFilter;
+use log::{debug, info, warn};
+#[cfg(target_os = "ios")]
 use oslog::OsLogger;
+use safer_ffi::{boxed::Box_, ffi_export, prelude::*};
+#[cfg(target_os = "ios")]
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::{
     io::{stdin, AsyncReadExt},
@@ -109,34 +113,86 @@ struct KConnectDevice {
     state: Arc<Mutex<KConnectDeviceState>>,
 }
 
-#[no_mangle]
-pub extern "C" fn kdeconnect_init() -> bool {
-    let oslog = utils::IosLogWrapper(
-        OsLogger::new("dev.r58playz.kdeconnectjb").level_filter(LevelFilter::Debug),
-        LevelFilter::Debug,
-    );
-    let stdoutlog = TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Stdout,
-        ColorChoice::Auto,
-    );
-    CombinedLogger::init(vec![Box::new(oslog), stdoutlog]).is_ok()
+#[derive_ReprC]
+#[repr(u8)]
+pub enum KConnectFfiDeviceType {
+    Desktop,
+    Laptop,
+    Phone,
+    Tablet,
+    Tv,
 }
 
-#[no_mangle]
-/// # Safety
-/// Safe if called with valid C string pointers
-pub unsafe extern "C" fn kdeconnect_start(
-    device_id: *const c_char,
-    device_name: *const c_char,
-    config_path: *const c_char,
-    initialized_callback: extern "C" fn() -> (),
-) -> bool {
-    check_str!(device_name);
-    check_str!(device_id);
-    check_str!(config_path);
+impl From<DeviceType> for KConnectFfiDeviceType {
+    fn from(value: DeviceType) -> Self {
+        use DeviceType as D;
+        match value {
+            D::Desktop => Self::Desktop,
+            D::Laptop => Self::Laptop,
+            D::Phone => Self::Phone,
+            D::Tablet => Self::Tablet,
+            D::Tv => Self::Tv,
+        }
+    }
+}
 
+impl From<KConnectFfiDeviceType> for DeviceType {
+    fn from(value: KConnectFfiDeviceType) -> Self {
+        use KConnectFfiDeviceType as D;
+        match value {
+            D::Desktop => Self::Desktop,
+            D::Laptop => Self::Laptop,
+            D::Phone => Self::Phone,
+            D::Tablet => Self::Tablet,
+            D::Tv => Self::Tv,
+        }
+    }
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectFfiDevice {
+    id: char_p::Box,
+    name: char_p::Box,
+    dev_type: KConnectFfiDeviceType,
+    state: repr_c::Box<KConnectFfiDeviceState>,
+}
+
+#[derive_ReprC]
+#[repr(opaque)]
+pub struct KConnectFfiDeviceState {
+    pub(crate) state: Arc<Mutex<KConnectDeviceState>>,
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_init() -> bool {
+    #[cfg(target_os = "ios")]
+    {
+        let oslog = utils::IosLogWrapper(
+            OsLogger::new("dev.r58playz.kdeconnectjb").level_filter(LevelFilter::Debug),
+            LevelFilter::Debug,
+        );
+        let stdoutlog = TermLogger::new(
+            LevelFilter::Debug,
+            Config::default(),
+            TerminalMode::Stdout,
+            ColorChoice::Auto,
+        );
+        CombinedLogger::init(vec![Box::new(oslog), stdoutlog]).is_ok()
+    }
+    #[cfg(not(target_os = "ios"))]
+    false
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_start(
+    device_id: char_p::Ref<'_>,
+    device_name: char_p::Ref<'_>,
+    device_type: KConnectFfiDeviceType,
+    config_path: char_p::Ref<'_>,
+    initialized_callback: extern "C" fn() -> (),
+    discovered_callback: extern "C" fn() -> (),
+) -> bool {
     if let Ok(rt) = build_runtime!() {
         let ret = rt.block_on(async move {
             if STATE.lock().await.is_some() {
@@ -147,14 +203,19 @@ pub unsafe extern "C" fn kdeconnect_start(
 
             let config_provider = Arc::new(
                 FsConfig::new(
-                    config_path.into(),
+                    config_path.to_string().into(),
                     "server_cert".into(),
                     "server_keypair".into(),
                 )
                 .await?,
             );
-            let (kdeconnect, client, mut device_stream) =
-                KdeConnect::new(device_id, device_name, DeviceType::Phone, config_provider).await?;
+            let (kdeconnect, client, mut device_stream) = KdeConnect::new(
+                device_id.to_string(),
+                device_name.to_string(),
+                device_type.into(),
+                config_provider,
+            )
+            .await?;
 
             STATE.lock().await.replace(KConnectState::new(client));
 
@@ -162,6 +223,8 @@ pub unsafe extern "C" fn kdeconnect_start(
 
             tokio::spawn(async move { kdeconnect.start_server().await });
 
+            // this closure is necessary
+            #[allow(clippy::redundant_closure)]
             std::thread::spawn(move || (initialized_callback)());
 
             info!("discovering");
@@ -181,6 +244,10 @@ pub unsafe extern "C" fn kdeconnect_start(
                     .unwrap()
                     .devices
                     .push(KConnectDevice { client, state });
+
+                // this closure is necessary
+                #[allow(clippy::redundant_closure)]
+                std::thread::spawn(move || (discovered_callback)());
             }
 
             Ok::<(), Box<dyn Error + Sync + Send>>(())
@@ -193,7 +260,7 @@ pub unsafe extern "C" fn kdeconnect_start(
     }
 }
 
-#[no_mangle]
+#[ffi_export]
 pub extern "C" fn kdeconnect_broadcast_identity() -> bool {
     if let Ok(rt) = build_runtime!() {
         rt.block_on(async {
@@ -212,11 +279,139 @@ pub extern "C" fn kdeconnect_broadcast_identity() -> bool {
     }
 }
 
-#[no_mangle]
+/// Device lists must be freed with kdeconnect_free_device_list. Calling kdeconnect_free_device to
+/// free a device from a device list is UB.
+#[ffi_export]
+pub extern "C" fn kdeconnect_get_device_list() -> repr_c::Vec<KConnectFfiDevice> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+
+            let mut out = Vec::new();
+
+            for device in state.devices.iter() {
+                let config = device.client.get_config().await?;
+                out.push(KConnectFfiDevice {
+                    dev_type: config.device_type.into(),
+                    // this should never fail
+                    id: config.id.try_into().unwrap(),
+                    // this should never fail
+                    name: config.name.try_into().unwrap(),
+                    state: Box_::new(KConnectFfiDeviceState {
+                        state: device.state.clone(),
+                    }),
+                })
+            }
+
+            Ok::<Vec<KConnectFfiDevice>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_device_list(devices: repr_c::Vec<KConnectFfiDevice>) {
+    drop(devices);
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_get_device_by_id(id: char_p::Ref<'_>) -> *mut KConnectFfiDevice {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+
+            let mut out = None;
+
+            for device in state.devices.iter() {
+                let config = device.client.get_config().await?;
+                if config.id == id.to_str() {
+                    out.replace(KConnectFfiDevice {
+                        dev_type: config.device_type.into(),
+                        // this should never fail
+                        id: config.id.try_into().unwrap(),
+                        // this should never fail
+                        name: config.name.try_into().unwrap(),
+                        state: Box_::new(KConnectFfiDeviceState {
+                            state: device.state.clone(),
+                        }),
+                    });
+                }
+            }
+
+            Ok::<*mut KConnectFfiDevice, KdeConnectError>(Box::into_raw(Box::new(
+                out.ok_or(KdeConnectError::Other)?,
+            )))
+        })
+        .unwrap_or(std::ptr::null_mut())
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// # Safety
+/// Must be valid pointer
+#[ffi_export]
+pub unsafe extern "C" fn kdeconnect_free_device(device: *mut KConnectFfiDevice) {
+    if !device.is_null() {
+        drop(Box::from_raw(device));
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_battery_level(device: &KConnectFfiDevice) -> i32 {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.state.lock().await.battery_level.unwrap_or(-1) })
+    } else {
+        -1
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_battery_charging(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .state
+                .lock()
+                .await
+                .battery_charging
+                .unwrap_or(false)
+        })
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_battery_under_threshold(
+    device: &KConnectFfiDevice,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .state
+                .lock()
+                .await
+                .battery_under_threshold
+                .unwrap_or(false)
+        })
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
 pub extern "C" fn kdeconnect_on_battery_event(
-    level: c_double,
-    charging: c_int,
-    within_threshold: c_int,
+    level: f32,
+    charging: i32,
+    within_threshold: i32,
 ) -> bool {
     let is_charging = charging == 1;
     let under_threshold = within_threshold == 1;
@@ -244,5 +439,15 @@ pub extern "C" fn kdeconnect_on_battery_event(
         .is_ok()
     } else {
         false
+    }
+}
+
+#[cfg(feature = "headers")]
+pub fn generate_headers() -> io::Result<()> {
+    let builder = safer_ffi::headers::builder();
+    if let Some(filename) = std::env::args_os().nth(1) {
+        builder.to_file(&filename)?.generate()
+    } else {
+        builder.to_writer(std::io::stdout()).generate()
     }
 }

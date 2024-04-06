@@ -55,14 +55,34 @@ bool getBatteryInfo(BatteryInfo *info) {
 }
 
 void powerSourceCallback(void *context) {
-  BatteryInfo info = {.level = 0.0f, .charging = 0};
-  if (getBatteryInfo(&info) &&
-      !kdeconnect_on_battery_event(info.level, info.charging, 0)) {
-    NSLog(@"battery event failed");
-  }
+    BatteryInfo info = {.level = 0.0f, .charging = 0};
+    if (getBatteryInfo(&info)
+        && !kdeconnect_on_battery_event(
+            info.level,
+            info.charging,
+            IOPSGetBatteryWarningLevel() != kIOPSLowBatteryWarningNone)
+    ) {
+        NSLog(@"battery event failed");
+    }
 }
 
 void initialized_callback() { powerSourceCallback(NULL); }
+
+void discovered_callback() {
+    NSLog(@"discovered");
+    Vec_KConnectFfiDevice_t vec = kdeconnect_get_device_list();
+    NSLog(@"got list");
+    for (int i = 0; i < vec.len; i++) {
+        KConnectFfiDevice_t device = vec.ptr[i];
+        NSLog(@"device name: %s id: %s batterylevel: %d", device.name, device.id, kdeconnect_device_get_battery_level(&device));
+        KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device.id);
+        if (device_by_id) {
+            NSLog(@"retrieved device by id: %s", device_by_id->name);
+            kdeconnect_free_device(device_by_id);
+        }
+    }
+    kdeconnect_free_device_list(vec);
+}
 
 int objc_main(int argc, char *argv[]) {
   @autoreleasepool {
@@ -130,9 +150,13 @@ int objc_main(int argc, char *argv[]) {
 
     NSThread *thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
-          [deviceId cStringUsingEncoding:NSUTF8StringEncoding], argv[1],
-          [KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding],
-          initialized_callback);
+          (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
+          argv[1],
+          K_CONNECT_FFI_DEVICE_TYPE_PHONE,
+          (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding],
+          initialized_callback,
+          discovered_callback
+      );
       NSLog(@"Ended OK: %d\n", res);
       exit(res);
     }];

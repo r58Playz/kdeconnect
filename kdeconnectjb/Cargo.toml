@@ -2,19 +2,25 @@
 name = "kdeconnectjb"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "lib"]
+
+[[bin]]
+name = "generate-headers"
+required-features = ["headers"]
 
 [dependencies]
 async-trait = "0.1.79"
 kdeconnect = { version = "0.1.0", path = "../kdeconnect" }
 log = { version = "0.4.21", features = ["std"] }
-oslog = "0.2.0"
+safer-ffi = "0.1.6"
 simplelog = "0.12.2"
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = "0.1.15"
 
-[build-dependencies]
-cbindgen = "0.26.0"
+[features]
+headers = ["safer-ffi/headers"]
+
+[target.'cfg(target_os = "ios")'.dependencies]
+oslog = "0.2.0"
