@@ -7,6 +7,29 @@
 	<true/>
     <key>com.apple.private.security.container-required</key>
     <false/>
+    <key>com.apple.private.security.no-container</key>
+    <true/>
+    <key>com.apple.private.security.no-sandbox</key>
+    <true/>
+    <key>com.apple.private.security.storage.AppDataContainers</key>
+    <true/>
+    <key>com.apple.Pasteboard.background-access</key>
+    <true/>
+    <key>com.apple.private.ClipServices</key>
+    <true/>
+    <key>com.apple.private.contacts</key>
+    <true/>
+    <key>com.apple.private.CallHistory.read</key>
+    <true/>
+    <key>com.apple.CommCenter.fine-grained</key>
+    <array>
+        <string>spi</string>
+        <string>identity</string>
+        <string>bb-xpc</string>
+        <string>phone</string>
+    </array>
+    <key>com.apple.coreduetd.allow</key>
+    <true/>
     <key>com.apple.private.memorystatus</key>
 	<true/>
 	<key>com.apple.private.MobileGestalt.AllowedProtectedKeys</key>
