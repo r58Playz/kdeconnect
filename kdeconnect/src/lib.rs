@@ -7,7 +7,7 @@ mod util;
 use std::{
     collections::HashMap,
     io,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
     time::Duration,
 };
@@ -273,7 +273,7 @@ impl KdeConnect {
 
                     // dummy dns name, it doesn't get checked anyway
                     let stream = TlsConnector::from(self.client_tls_config.clone())
-                        .connect("r58playz.dev".try_into()?, stream)
+                        .connect(identity.device_id.clone().try_into()?, stream)
                         .await?;
 
                     info!("new device via tcp: {:#?}", identity);
@@ -430,9 +430,34 @@ impl KdeConnect {
             if let ServiceEvent::ServiceResolved(info) = service
                 && let Some(id) = info.get_property_val_str("id")
                 && id != self.device_id
+                && let Some(addr) = info.get_addresses().iter().next()
             {
-                info!("mdns resolved kde connect: {:#?}", info);
-                // TODO should this also be hooked into the new device discovery?
+                info!(
+                    "new device discovered through mdns, sending identity: {:?}",
+                    info.get_fullname()
+                );
+                let addr = SocketAddr::new(*addr, info.get_port());
+                let bind_addr = if addr.is_ipv4() {
+                    SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+                } else {
+                    SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0)
+                };
+
+                let ret = async {
+                    UdpSocket::bind(bind_addr)
+                        .await?
+                        .send_to(
+                            &json::to_vec(&self.make_identity(Some(KDECONNECT_PORT)))?,
+                            addr,
+                        )
+                        .await
+                }
+                .await;
+                if let Err(err) = ret {
+                    error!("error while sending identity to mdns device: {:?}", err);
+                } else {
+                    info!("sent identity to mdns device: {:?}", info.get_fullname());
+                }
             }
         }
         Ok(())

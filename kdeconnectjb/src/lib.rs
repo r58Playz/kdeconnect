@@ -1,4 +1,4 @@
-#![feature(once_cell_try, trivial_bounds)]
+#![feature(once_cell_try)]
 #[macro_use]
 mod utils;
 mod device;
@@ -32,6 +32,7 @@ use tokio_stream::StreamExt;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static STATE: Mutex<Option<KConnectState>> = Mutex::const_new(None);
+static CALLBACKS: Mutex<KConnectCallbacks> = Mutex::const_new(KConnectCallbacks::new());
 
 struct KConnectState {
     client: KdeConnectClient,
@@ -55,6 +56,127 @@ impl KConnectState {
     }
 }
 
+struct KConnectCallbacks {
+    pub initialized: Option<Arc<dyn Fn() + Sync + Send>>,
+    pub discovered: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub ping_recieved: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub pair_status_changed: Option<Arc<dyn Fn(char_p::Box, bool) + Sync + Send>>,
+    pub battery_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub clipboard_changed: Option<Arc<dyn Fn(char_p::Box, char_p::Box) + Sync + Send>>,
+    pub pairing_requested: Option<Arc<dyn Fn(char_p::Box) -> bool + Sync + Send>>,
+}
+
+impl KConnectCallbacks {
+    pub const fn new() -> Self {
+        Self {
+            initialized: None,
+            discovered: None,
+            ping_recieved: None,
+            pair_status_changed: None,
+            battery_changed: None,
+            clipboard_changed: None,
+            pairing_requested: None,
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! call_callback {
+    ($name:ident, $($args:expr),*) => {
+        if let Some(cb) = $crate::CALLBACKS.lock().await.$name.clone() {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send((cb)($($args),*));
+            });
+            rx.await.ok()
+        } else {
+            None
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! call_callback_no_ret {
+    ($name:ident, $($args:expr),*) => {
+        if let Some(cb) = $crate::CALLBACKS.lock().await.$name.clone() {
+            std::thread::spawn(move || {
+                (cb)($($args),*);
+            });
+        }
+    };
+}
+
+macro_rules! callback {
+    ($name:ident, $type:ty, $var:ident, $($args:expr),*) => {
+        #[ffi_export]
+        pub extern "C" fn $name(callback: $type) -> bool {
+            if let Ok(rt) = build_runtime!() {
+                rt.block_on(async {
+                    #[allow(clippy::redundant_closure)]
+                    CALLBACKS
+                        .lock()
+                        .await
+                        .$var
+                        .replace(Arc::new(move |$($args),*| (callback)($($args),*)));
+                    true
+                })
+            } else {
+                false
+            }
+        }
+    };
+}
+
+callback!(
+    kdeconnect_register_init_callback,
+    extern "C" fn() -> (),
+    initialized,
+);
+
+callback!(
+    kdeconnect_register_discovered_callback,
+    extern "C" fn(char_p::Box) -> (),
+    discovered,
+    x
+);
+
+callback!(
+    kdeconnect_register_ping_callback,
+    extern "C" fn(char_p::Box) -> (),
+    ping_recieved,
+    x
+);
+
+callback!(
+    kdeconnect_register_pair_status_changed_callback,
+    extern "C" fn(char_p::Box, bool) -> (),
+    pair_status_changed,
+    x,
+    y
+);
+
+callback!(
+    kdeconnect_register_battery_callback,
+    extern "C" fn(char_p::Box) -> (),
+    battery_changed,
+    x
+);
+
+callback!(
+    kdeconnect_register_clipboard_callback,
+    extern "C" fn(char_p::Box, char_p::Box) -> (),
+    clipboard_changed,
+    x,
+    y
+);
+
+callback!(
+    kdeconnect_register_pairing_callback,
+    extern "C" fn(char_p::Box) -> bool,
+    pairing_requested,
+    x
+);
+
 #[ffi_export]
 pub extern "C" fn kdeconnect_init() -> bool {
     #[cfg(target_os = "ios")]
@@ -75,17 +197,12 @@ pub extern "C" fn kdeconnect_init() -> bool {
     false
 }
 
-/// TODO: move callbacks out of start and do something like kdeconnect_register_init_callback() etc
-///       will allow for more specific changed callbacks
 #[ffi_export]
 pub extern "C" fn kdeconnect_start(
     device_id: char_p::Ref<'_>,
     device_name: char_p::Ref<'_>,
     device_type: KConnectFfiDeviceType,
     config_path: char_p::Ref<'_>,
-    initialized_callback: extern "C" fn() -> (),
-    discovered_callback: extern "C" fn() -> (),
-    changed_callback: extern "C" fn(char_p::Box) -> (),
 ) -> bool {
     if let Ok(rt) = build_runtime!() {
         let ret = rt.block_on(async move {
@@ -117,9 +234,7 @@ pub extern "C" fn kdeconnect_start(
 
             tokio::spawn(async move { kdeconnect.start_server().await });
 
-            // this closure is necessary
-            #[allow(clippy::redundant_closure)]
-            std::thread::spawn(move || (initialized_callback)());
+            call_callback_no_ret!(initialized,);
 
             info!("discovering");
             while let Some((mut dev, client)) = device_stream.next().await {
@@ -129,13 +244,13 @@ pub extern "C" fn kdeconnect_start(
                 );
                 let state = Arc::new(Mutex::new(KConnectDeviceState::default()));
                 let config = dev.config.clone();
-                // this closure is necessary
+
                 #[allow(clippy::redundant_closure)]
-                let handler = Box::new(KConnectHandler::new(
-                    state.clone(),
-                    dev.config.clone(),
-                    move |x| (changed_callback)(x),
-                ));
+                let handler = Box::new(KConnectHandler::new(state.clone(), dev.config.clone()));
+
+                // this should never fail
+                let id = dev.config.id.clone().try_into().unwrap();
+
                 tokio::spawn(async move { dev.task(handler).await });
                 // STATE will always be Some
                 STATE
@@ -150,9 +265,7 @@ pub extern "C" fn kdeconnect_start(
                         config,
                     });
 
-                // this closure is necessary
-                #[allow(clippy::redundant_closure)]
-                std::thread::spawn(move || (discovered_callback)());
+                call_callback_no_ret!(discovered, id);
             }
 
             Ok::<(), Box<dyn Error + Sync + Send>>(())
@@ -166,8 +279,8 @@ pub extern "C" fn kdeconnect_start(
 }
 
 #[ffi_export]
-pub extern "C" fn kdeconnect_free_device_id(id: char_p::Box) {
-    drop(id)
+pub extern "C" fn kdeconnect_free_string(str: char_p::Box) {
+    drop(str)
 }
 
 #[ffi_export]

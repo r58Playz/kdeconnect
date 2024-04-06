@@ -109,7 +109,8 @@ impl Device {
 
     pub async fn task(&mut self, mut handler: Box<dyn DeviceHandler + Sync + Send>) -> Result<()> {
         self.send_paired_data(&mut handler).await?;
-        let ret = self.inner_task(handler).await;
+        let ret = self.inner_task(&mut handler).await;
+        handler.handle_exit().await;
         self.connected_clients
             .lock()
             .await
@@ -139,7 +140,7 @@ impl Device {
 
     async fn inner_task(
         &mut self,
-        mut handler: Box<dyn DeviceHandler + Sync + Send>,
+        handler: &mut Box<dyn DeviceHandler + Sync + Send>,
     ) -> Result<()> {
         while let Some(evt) = select! {
             x = self.stream_r.next_line() => x?.map(DeviceEvent::Stream),
@@ -164,6 +165,7 @@ impl Device {
                                 let pair_packet = Pair { pair: false };
                                 self.stream_w.send(make_packet_str!(pair_packet)?).await?;
                                 debug!("unpaired from {:?}", self.config.id);
+                                handler.handle_pair_status_change(false).await;
                             } else if self.config.certificate.is_none() && body.pair {
                                 // unpaired and asking to pair?
                                 let should_pair = handler.handle_pairing_request().await;
@@ -174,7 +176,9 @@ impl Device {
                                 let pair_packet = Pair { pair: should_pair };
                                 self.stream_w.send(make_packet_str!(pair_packet)?).await?;
 
-                                self.send_paired_data(&mut handler).await?;
+                                handler.handle_pair_status_change(true).await;
+
+                                self.send_paired_data(handler).await?;
 
                                 debug!(
                                     "{} pair request from {:?}",
@@ -264,11 +268,16 @@ impl DeviceClient {
         self.client_w.send(DeviceAction::GetConfig(tx))?;
         Ok(rx.await?)
     }
+
+    pub async fn is_paired(&self) -> Result<bool> {
+        Ok(self.get_config().await?.certificate.is_some())
+    }
 }
 
 #[async_trait::async_trait]
 pub trait DeviceHandler {
     async fn handle_ping(&mut self, packet: Ping);
+    async fn handle_pair_status_change(&mut self, pair_status: bool);
     async fn handle_battery(&mut self, packet: Battery);
     async fn handle_clipboard_content(&mut self, content: String);
 
@@ -276,4 +285,6 @@ pub trait DeviceHandler {
 
     async fn get_battery(&mut self) -> Battery;
     async fn get_clipboard_content(&mut self) -> String;
+
+    async fn handle_exit(&mut self);
 }

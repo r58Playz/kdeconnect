@@ -67,28 +67,60 @@ void powerSourceCallback(void *context) {
   }
 }
 
-void initialized_callback() { powerSourceCallback(NULL); }
-
-void discovered_callback() {
-  NSLog(@"discovered");
-  Vec_KConnectFfiDevice_t vec = kdeconnect_get_device_list();
-  NSLog(@"got list");
-  for (int i = 0; i < vec.len; i++) {
-    KConnectFfiDevice_t device = vec.ptr[i];
-    NSLog(@"device name: %s id: %s batterylevel: %d", device.name, device.id, kdeconnect_device_get_battery_level(&device));
-    KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device.id);
-    if (device_by_id) {
-      NSLog(@"retrieved device by id: %s", device_by_id->name);
-      kdeconnect_free_device(device_by_id);
-    }
-  }
-  kdeconnect_free_device_list(vec);
+void initialized_callback() { 
+  NSLog(@"initialized, sending battery data");
+  powerSourceCallback(NULL);
 }
 
-void changed_callback(char *id) {
-  NSLog(@"device id %s changed", id);
-  kdeconnect_free_device_id(id);
-  // TODO: Update clipboard here
+void discovered_callback(char* device_id) {
+  NSLog(@"discovered");
+  KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
+  if (device_by_id) {
+    NSLog(@"retrieved discovered device: %s", device_by_id->name);
+    // TODO: Send this over to the app (@bomberfish)
+    kdeconnect_free_device(device_by_id);
+  }
+  kdeconnect_free_string(device_id);
+}
+
+bool pairing_callback(char* device_id) {
+  KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
+  if (device_by_id) {
+    NSLog(@"retrieved device that wants to pair: %s", device_by_id->name);
+    // TODO: Ask user via alert here (@bomberfish)
+    kdeconnect_free_device(device_by_id);
+    kdeconnect_free_string(device_id);
+    NSLog(@"blindly accepting pair");
+    return true;
+  }
+  kdeconnect_free_string(device_id);
+  return false;
+}
+
+void pair_status_changed_callback(char* device_id, bool pair_status) {
+  KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
+  if (device_by_id) {
+    NSLog(@"device `%s` pair status changed to: %s", device_by_id->name, pair_status ? "paired" : "not paired");
+    // TODO: Send this over to the app (@bomberfish)
+    kdeconnect_free_device(device_by_id);
+  }
+  kdeconnect_free_string(device_id);
+}
+
+void battery_callback(char *device_id) {
+  KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
+  if (device_by_id) {
+    NSLog(@"device sent battery data: %s", device_by_id->name);
+    // TODO: Send this over to the app (@bomberfish)
+    kdeconnect_free_device(device_by_id);
+  }
+  kdeconnect_free_string(device_id);
+}
+
+void clipboard_callback(char *device_id, char *clipboard) {
+  NSLog(@"clipboard data recieved from device_id: `%s` data: `%s`", device_id, clipboard);
+  // TODO: Set system clipboard here
+  kdeconnect_free_string(device_id);
 }
 
 int objc_main(int argc, char *argv[]) {
@@ -155,15 +187,19 @@ int objc_main(int argc, char *argv[]) {
       return 1;
     }
 
+    kdeconnect_register_init_callback(initialized_callback);
+    kdeconnect_register_discovered_callback(discovered_callback);
+    kdeconnect_register_pairing_callback(pairing_callback);
+    kdeconnect_register_pair_status_changed_callback(pair_status_changed_callback);
+    kdeconnect_register_battery_callback(battery_callback);
+    kdeconnect_register_clipboard_callback(clipboard_callback);
+
     NSThread *thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
-          (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
-          argv[1],
-          K_CONNECT_FFI_DEVICE_TYPE_PHONE,
-          (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding],
-          initialized_callback,
-          discovered_callback,
-          changed_callback
+        (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
+        argv[1],
+        K_CONNECT_FFI_DEVICE_TYPE_PHONE,
+        (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding]
       );
       NSLog(@"Ended OK: %d\n", res);
       exit(res);
