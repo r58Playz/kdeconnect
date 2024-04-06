@@ -252,6 +252,7 @@ pub extern "C" fn kdeconnect_start(
                 let id = dev.config.id.clone().try_into().unwrap();
 
                 tokio::spawn(async move { dev.task(handler).await });
+
                 // STATE will always be Some
                 STATE
                     .lock()
@@ -260,7 +261,7 @@ pub extern "C" fn kdeconnect_start(
                     .unwrap()
                     .devices
                     .push(KConnectDevice {
-                        client,
+                        client: client.into(),
                         state,
                         config,
                     });
@@ -322,6 +323,7 @@ pub extern "C" fn kdeconnect_get_device_list() -> repr_c::Vec<KConnectFfiDevice>
                     name: device.config.name.clone().try_into().unwrap(),
                     state: Box_::new(KConnectFfiDeviceState {
                         state: device.state.clone(),
+                        client: device.client.clone(),
                     }),
                 })
             }
@@ -359,6 +361,7 @@ pub extern "C" fn kdeconnect_get_device_by_id(id: char_p::Ref<'_>) -> *mut KConn
                         name: device.config.name.clone().try_into().unwrap(),
                         state: Box_::new(KConnectFfiDeviceState {
                             state: device.state.clone(),
+                            client: device.client.clone(),
                         }),
                     });
                 }
@@ -447,6 +450,44 @@ pub extern "C" fn kdeconnect_device_get_clipboard_content(
         .unwrap()
     } else {
         "".to_string().try_into().unwrap()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_send_ping(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.send_ping(None).await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_is_paired(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device.state.client.is_paired().await.and_then(|x| {
+                if x {
+                    Ok(())
+                } else {
+                    Err(KdeConnectError::Other)
+                }
+            })
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_pair(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.pair().await })
+            .is_ok()
+    } else {
+        false
     }
 }
 

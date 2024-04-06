@@ -123,14 +123,9 @@ void clipboard_callback(char *device_id, char *clipboard) {
   kdeconnect_free_string(device_id);
 }
 
-int objc_main(int argc, char *argv[]) {
+int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
   @autoreleasepool {
-    if (argc != 2 && argc != 3) {
-      NSLog(@"usage: %s <device_name> [--trollstore]\n", argv[0]);
-      return 1;
-    }
-
-    if (argc == 3 && strcmp(argv[2], "--trollstore")) {
+    if (trollstore) {
       NSLog(@"Starting as TrollStore daemon");
       NSLog(@"[Flotsam:INFO] Hammer time.");
       pid_t pid = getpid();
@@ -197,8 +192,8 @@ int objc_main(int argc, char *argv[]) {
     NSThread *thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
         (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
-        argv[1],
-        K_CONNECT_FFI_DEVICE_TYPE_PHONE,
+        deviceName,
+        deviceType,
         (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding]
       );
       NSLog(@"Ended OK: %d\n", res);

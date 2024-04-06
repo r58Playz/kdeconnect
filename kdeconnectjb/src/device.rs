@@ -134,7 +134,7 @@ pub struct KConnectDeviceState {
 }
 
 pub struct KConnectDevice {
-    pub client: DeviceClient,
+    pub client: Arc<DeviceClient>,
     pub config: DeviceConfig,
     pub state: Arc<Mutex<KConnectDeviceState>>,
 }
@@ -188,4 +188,5 @@ pub struct KConnectFfiDevice {
 #[repr(opaque)]
 pub struct KConnectFfiDeviceState {
     pub(crate) state: Arc<Mutex<KConnectDeviceState>>,
+    pub(crate) client: Arc<DeviceClient>,
 }

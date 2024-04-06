@@ -1,5 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
+use event_listener::Event;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
@@ -35,6 +42,38 @@ impl LockedDeviceWrite {
     }
 }
 
+pub async fn create_device(
+    identity: Identity,
+    config_provider: Arc<dyn ConfigProvider + Sync + Send>,
+    stream: TlsStream<BufReader<TcpStream>>,
+    connected_clients: Arc<Mutex<Vec<String>>>,
+) -> Result<(Device, DeviceClient)> {
+    let device_config = config_provider
+        .retrieve_device_config(&identity.device_id)
+        .await
+        .ok();
+
+    let (client_tx, client_rx) = mpsc::unbounded_channel();
+
+    let initiated_pair = Arc::new(AtomicBool::new(false));
+    let pair_event = Arc::new(Event::new());
+
+    Ok((
+        Device::new(
+            identity,
+            device_config,
+            config_provider,
+            stream,
+            connected_clients,
+            client_rx,
+            initiated_pair.clone(),
+            pair_event.clone(),
+        )
+        .await?,
+        DeviceClient::new(client_tx, initiated_pair, pair_event),
+    ))
+}
+
 pub struct Device {
     pub config: DeviceConfig,
     config_provider: Arc<dyn ConfigProvider + Sync + Send>,
@@ -45,6 +84,9 @@ pub struct Device {
     stream_cert: Vec<u8>,
 
     client_r: mpsc::UnboundedReceiver<DeviceAction>,
+
+    initiated_pair: Arc<AtomicBool>,
+    pair_event: Arc<Event>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -58,6 +100,7 @@ pub struct DeviceConfig {
 pub(crate) enum DeviceAction {
     SendPacket(String, oneshot::Sender<Result<()>>),
     GetConfig(oneshot::Sender<DeviceConfig>),
+    GetPaired(oneshot::Sender<bool>),
 }
 
 enum DeviceEvent {
@@ -70,6 +113,7 @@ impl Device {
     // then tls starts, only if device is trusted does cert get verified
     // once in tls untrusted devices can be trusted by sending pair and then storing
     // device's cert to verify
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         identity: Identity,
         conf: Option<DeviceConfig>,
@@ -77,6 +121,8 @@ impl Device {
         stream: TlsStream<BufReader<TcpStream>>,
         connected_clients: Arc<Mutex<Vec<String>>>,
         client_r: mpsc::UnboundedReceiver<DeviceAction>,
+        initiated_pair: Arc<AtomicBool>,
+        pair_event: Arc<Event>,
     ) -> Result<Self> {
         let cert = conf.and_then(|x| x.certificate);
 
@@ -105,6 +151,9 @@ impl Device {
             stream_cert,
 
             client_r,
+
+            initiated_pair,
+            pair_event,
         })
     }
 
@@ -139,6 +188,10 @@ impl Device {
         Ok(())
     }
 
+    fn is_paired(&self) -> bool {
+        self.config.certificate.is_some()
+    }
+
     async fn inner_task(
         &mut self,
         handler: &mut Box<dyn DeviceHandler + Sync + Send>,
@@ -160,42 +213,55 @@ impl Device {
                         }
                         Pair::TYPE => {
                             let body: Pair = json::from_value(packet.body)?;
-                            if self.config.certificate.is_some() && !body.pair {
+                            if self.is_paired() && !body.pair {
                                 // already paired and asking to unpair?
                                 self.config.certificate.take();
                                 let pair_packet = Pair { pair: false };
                                 self.stream_w.send(make_packet_str!(pair_packet)?).await?;
                                 debug!("unpaired from {:?}", self.config.id);
                                 handler.handle_pair_status_change(false).await;
-                            } else if self.config.certificate.is_none() && body.pair {
+                            } else if !self.is_paired() && body.pair {
                                 // unpaired and asking to pair?
                                 // > By convention the request times out after 30 seconds.
                                 // https://valent.andyholmes.ca/documentation/protocol.html#kdeconnectpair
-                                let should_pair = timeout(
-                                    Duration::from_secs(30),
-                                    handler.handle_pairing_request(),
-                                )
-                                .await
-                                .unwrap_or(false);
+                                let initiated_pair = self.initiated_pair.load(Ordering::Acquire);
+                                let should_pair = initiated_pair
+                                    || timeout(
+                                        Duration::from_secs(30),
+                                        handler.handle_pairing_request(),
+                                    )
+                                    .await
+                                    .unwrap_or(false);
 
                                 if should_pair {
                                     self.config.certificate.replace(self.stream_cert.clone());
                                 }
-                                let pair_packet = Pair { pair: should_pair };
-                                self.stream_w.send(make_packet_str!(pair_packet)?).await?;
 
-                                handler.handle_pair_status_change(true).await;
+                                if !initiated_pair {
+                                    let pair_packet = Pair { pair: should_pair };
+                                    self.stream_w.send(make_packet_str!(pair_packet)?).await?;
+                                }
+
+                                if should_pair {
+                                    handler.handle_pair_status_change(true).await;
+                                    self.initiated_pair.store(false, Ordering::Release);
+                                }
 
                                 self.send_paired_data(handler).await?;
+
+                                self.pair_event.notify(usize::MAX);
 
                                 debug!(
                                     "{} pair request from {:?}",
                                     if should_pair { "accepted" } else { "refused" },
                                     self.config.id
                                 );
-                            } else {
-                                // just forward it?
-                                self.stream_w.send(make_packet_str!(body)?).await?;
+                            } else if !self.is_paired()
+                                && self.initiated_pair.load(Ordering::Acquire)
+                                && !body.pair
+                            {
+                                // rejected a pair request
+                                self.pair_event.notify(usize::MAX);
                             }
                             self.config_provider
                                 .store_device_config(&self.config)
@@ -234,6 +300,9 @@ impl Device {
                         A::GetConfig(response) => {
                             let _ = response.send(self.config.clone());
                         }
+                        A::GetPaired(response) => {
+                            let _ = response.send(self.is_paired());
+                        }
                     }
                 }
             }
@@ -244,11 +313,23 @@ impl Device {
 
 pub struct DeviceClient {
     client_w: mpsc::UnboundedSender<DeviceAction>,
+    initiated_pair: Arc<AtomicBool>,
+
+    pair_event: Arc<Event>,
 }
 
 impl DeviceClient {
-    pub(crate) fn new(client_w: mpsc::UnboundedSender<DeviceAction>) -> Self {
-        Self { client_w }
+    pub(crate) fn new(
+        client_w: mpsc::UnboundedSender<DeviceAction>,
+        initiated_pair: Arc<AtomicBool>,
+        pair_event: Arc<Event>,
+    ) -> Self {
+        Self {
+            client_w,
+
+            initiated_pair,
+            pair_event,
+        }
     }
 
     async fn send_packet(&self, packet: String) -> Result<()> {
@@ -278,7 +359,26 @@ impl DeviceClient {
     }
 
     pub async fn is_paired(&self) -> Result<bool> {
-        Ok(self.get_config().await?.certificate.is_some())
+        let (tx, rx) = oneshot::channel();
+        self.client_w.send(DeviceAction::GetPaired(tx))?;
+        Ok(rx.await?)
+    }
+
+    pub async fn pair(&self) -> Result<()> {
+        if self.is_paired().await? {
+            return Err(KdeConnectError::AlreadyPaired);
+        }
+        let pair = Pair { pair: true };
+        self.send_packet(make_packet_str!(pair)?).await?;
+        self.initiated_pair.store(true, Ordering::Release);
+        self.pair_event.listen().await;
+        self.is_paired().await.and_then(|x| {
+            if x {
+                Ok(())
+            } else {
+                Err(KdeConnectError::DeviceRejectedPair)
+            }
+        })
     }
 }
 

@@ -1,1 +1,3 @@
-int objc_main(int argc, char *argv[]);
+#import "kdeconnectjb.h"
+
+int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore);

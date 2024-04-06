@@ -39,6 +39,7 @@ use tokio_rustls::{
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
+    device::create_device,
     packets::{Battery, Ping, PROTOCOL_VERSION},
     util::NoCertificateVerification,
 };
@@ -67,6 +68,11 @@ pub enum KdeConnectError {
     ServerAlreadyStarted,
     #[error("Other")]
     Other,
+
+    #[error("Device rejected pair")]
+    DeviceRejectedPair,
+    #[error("Already paired")]
+    AlreadyPaired,
 }
 
 impl<T> From<mpsc::error::SendError<T>> for KdeConnectError {
@@ -260,12 +266,6 @@ impl KdeConnect {
                 let dev_id = identity.device_id.clone();
 
                 let ret = async {
-                    let device_config = self
-                        .config
-                        .retrieve_device_config(&identity.device_id)
-                        .await
-                        .ok();
-
                     self.connected_clients
                         .lock()
                         .await
@@ -278,22 +278,16 @@ impl KdeConnect {
 
                     info!("new device via tcp: {:#?}", identity);
 
-                    let (client_tx, client_rx) = mpsc::unbounded_channel();
-
-                    let device = Device::new(
+                    let device_tuple = create_device(
                         identity,
-                        device_config,
                         self.config.clone(),
                         stream.into(),
                         self.connected_clients.clone(),
-                        client_rx,
                     )
                     .await?;
 
-                    let client = DeviceClient::new(client_tx);
-
                     self.new_device_tx
-                        .send((device, client))
+                        .send(device_tuple)
                         .map_err(KdeConnectError::from)
                 }
                 .await;
@@ -344,30 +338,18 @@ impl KdeConnect {
                         .accept(stream)
                         .await?;
 
-                    let device_config = self
-                        .config
-                        .retrieve_device_config(&identity.device_id)
-                        .await
-                        .ok();
-
                     info!("new device discovered through udp: {:#?}", identity);
 
-                    let (client_tx, client_rx) = mpsc::unbounded_channel();
-
-                    let device = Device::new(
+                    let device_tuple = create_device(
                         identity,
-                        device_config,
                         self.config.clone(),
                         stream.into(),
                         self.connected_clients.clone(),
-                        client_rx,
                     )
                     .await?;
 
-                    let client = DeviceClient::new(client_tx);
-
                     self.new_device_tx
-                        .send((device, client))
+                        .send(device_tuple)
                         .map_err(KdeConnectError::from)
                 }
                 .await;
