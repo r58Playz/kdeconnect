@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,7 @@ use tokio::{
     net::TcpStream,
     select,
     sync::{mpsc, oneshot, Mutex},
+    time::timeout,
 };
 use tokio_rustls::TlsStream;
 
@@ -168,7 +169,14 @@ impl Device {
                                 handler.handle_pair_status_change(false).await;
                             } else if self.config.certificate.is_none() && body.pair {
                                 // unpaired and asking to pair?
-                                let should_pair = handler.handle_pairing_request().await;
+                                // > By convention the request times out after 30 seconds.
+                                // https://valent.andyholmes.ca/documentation/protocol.html#kdeconnectpair
+                                let should_pair = timeout(
+                                    Duration::from_secs(30),
+                                    handler.handle_pairing_request(),
+                                )
+                                .await
+                                .unwrap_or(false);
 
                                 if should_pair {
                                     self.config.certificate.replace(self.stream_cert.clone());
