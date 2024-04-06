@@ -10,22 +10,23 @@ ARCHS = arm64
 
 include $(THEOS)/makefiles/common.mk
 
-TOOL_NAME = kdeconnectjb
+TOOL_NAME = kdeconnectd
 
-kdeconnectjb_FILES = main.m
-kdeconnectjb_CFLAGS = -fobjc-arc -I../kdeconnectjb/target/
-kdeconnectjb_CODESIGN_FLAGS = -Sentitlements.plist
-kdeconnectjb_INSTALL_PATH = /usr/local/bin
-kdeconnectjb_LD_FLAGS = -lkdeconnectjb
-kdeconnectjb_LIBRARIES = MobileGestalt
-kdeconnectjb_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit IOKit
-kdeconnectjb_PRIVATE_FRAMEWORKS = AppSupport CoreTelephony
+kdeconnectd_FILES = $(wildcard *.m) $(wildcard *.swift)
+kdeconnectd_CFLAGS = -fobjc-arc -I../kdeconnectjb/target/
+kdeconnectd_CODESIGN_FLAGS = -Sentitlements.plist
+kdeconnectd_INSTALL_PATH = /usr/local/bin
+kdeconnectd_LD_FLAGS = -lkdeconnectjb
+kdeconnectd_LIBRARIES = MobileGestalt
+kdeconnectd_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit IOKit
+kdeconnectd_PRIVATE_FRAMEWORKS = AppSupport CoreTelephony
 ifeq ($(FINALPACKAGE),1)
-kdeconnectjb_OBJ_FILES = ../target/aarch64-apple-ios/release/libkdeconnectjb.a
+kdeconnectd_OBJ_FILES = ../target/aarch64-apple-ios/release/libkdeconnectjb.a
 else
-kdeconnectjb_OBJ_FILES = ../target/aarch64-apple-ios/debug/libkdeconnectjb.a
+kdeconnectd_OBJ_FILES = ../target/aarch64-apple-ios/debug/libkdeconnectjb.a
 endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
-SUBPROJECTS += app 
+SUBPROJECTS += app
+
 include $(THEOS_MAKE_PATH)/aggregate.mk
