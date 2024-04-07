@@ -130,6 +130,10 @@ pub struct ClipboardConnect {
 }
 derive_type!(ClipboardConnect, "kdeconnect.clipboard.connect");
 
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub struct FindPhone {}
+derive_type!(FindPhone, "kdeconnect.findmyphone.request");
+
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway
 #[macro_export]

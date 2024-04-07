@@ -84,6 +84,16 @@ impl DeviceHandler for KConnectHandler {
         call_callback_no_ret!(clipboard_changed, id, content);
     }
 
+    async fn handle_find_phone(&mut self) {
+        // STATE will always be Some here
+        let mut locked = STATE.lock().await;
+        let state = locked.as_mut().unwrap();
+        state.being_found = !state.being_found;
+        if state.being_found {
+            call_callback_no_ret!(find_requested,);
+        }
+    }
+
     async fn handle_pairing_request(&mut self) -> bool {
         info!("recieved pair from {:?}", self.config);
         let id = self.id.clone();

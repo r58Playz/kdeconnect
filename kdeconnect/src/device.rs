@@ -23,7 +23,8 @@ use crate::{
     config::ConfigProvider,
     make_packet, make_packet_str,
     packets::{
-        Battery, Clipboard, ClipboardConnect, DeviceType, Identity, Packet, PacketType, Pair, Ping,
+        Battery, Clipboard, ClipboardConnect, DeviceType, FindPhone, Identity, Packet, PacketType,
+        Pair, Ping,
     },
     util::get_time_ms,
     KdeConnectError, Result,
@@ -280,6 +281,9 @@ impl Device {
                                 handler.handle_clipboard_content(connect.content).await;
                             }
                         }
+                        FindPhone::TYPE => {
+                            handler.handle_find_phone().await;
+                        }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
                             packet.packet_type, packet.body
@@ -380,6 +384,11 @@ impl DeviceClient {
             }
         })
     }
+
+    pub async fn toggle_find_phone(&self) -> Result<()> {
+        let packet = FindPhone {};
+        self.send_packet(make_packet_str!(packet)?).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -388,6 +397,7 @@ pub trait DeviceHandler {
     async fn handle_pair_status_change(&mut self, pair_status: bool);
     async fn handle_battery(&mut self, packet: Battery);
     async fn handle_clipboard_content(&mut self, content: String);
+    async fn handle_find_phone(&mut self);
 
     async fn handle_pairing_request(&mut self) -> bool;
 

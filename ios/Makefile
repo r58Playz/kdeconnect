@@ -12,7 +12,7 @@ kdeconnectd_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectd_INSTALL_PATH = /usr/local/bin
 kdeconnectd_LD_FLAGS = -lkdeconnectjb
 kdeconnectd_LIBRARIES = MobileGestalt
-kdeconnectd_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit IOKit
+kdeconnectd_FRAMEWORKS = Foundation CoreFoundation MobileCoreServices CoreServices CallKit IOKit AudioToolbox
 kdeconnectd_PRIVATE_FRAMEWORKS = AppSupport CoreTelephony
 ifeq ($(FINALPACKAGE),1)
 kdeconnectd_OBJ_FILES = ../target/aarch64-apple-ios/release/libkdeconnectjb.a

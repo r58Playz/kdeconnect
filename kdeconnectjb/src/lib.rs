@@ -39,6 +39,7 @@ struct KConnectState {
     devices: Vec<KConnectDevice>,
     current_battery: Battery,
     current_clipboard: String,
+    being_found: bool,
 }
 
 impl KConnectState {
@@ -52,6 +53,7 @@ impl KConnectState {
                 under_threshold: false,
             },
             current_clipboard: String::new(),
+            being_found: false,
         }
     }
 }
@@ -59,11 +61,13 @@ impl KConnectState {
 struct KConnectCallbacks {
     pub initialized: Option<Arc<dyn Fn() + Sync + Send>>,
     pub discovered: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+
     pub ping_recieved: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub pair_status_changed: Option<Arc<dyn Fn(char_p::Box, bool) + Sync + Send>>,
     pub battery_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub clipboard_changed: Option<Arc<dyn Fn(char_p::Box, char_p::Box) + Sync + Send>>,
     pub pairing_requested: Option<Arc<dyn Fn(char_p::Box) -> bool + Sync + Send>>,
+    pub find_requested: Option<Arc<dyn Fn() + Sync + Send>>,
 }
 
 impl KConnectCallbacks {
@@ -71,11 +75,13 @@ impl KConnectCallbacks {
         Self {
             initialized: None,
             discovered: None,
+
             ping_recieved: None,
             pair_status_changed: None,
             battery_changed: None,
             clipboard_changed: None,
             pairing_requested: None,
+            find_requested: None,
         }
     }
 }
@@ -175,6 +181,12 @@ callback!(
     extern "C" fn(char_p::Box) -> bool,
     pairing_requested,
     x
+);
+
+callback!(
+    kdeconnect_register_find_callback,
+    extern "C" fn() -> (),
+    find_requested,
 );
 
 #[ffi_export]
@@ -298,6 +310,36 @@ pub extern "C" fn kdeconnect_broadcast_identity() -> bool {
                 .await
         })
         .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_get_is_lost() -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            STATE
+                .lock()
+                .await
+                .as_ref()
+                .map(|x| x.being_found)
+                .and_then(|x| if x { Some(()) } else { None })
+        })
+        .is_some()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_set_is_lost(is_lost: bool) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            STATE.lock().await.as_mut()?.being_found = is_lost;
+            Some(())
+        })
+        .is_some()
     } else {
         false
     }

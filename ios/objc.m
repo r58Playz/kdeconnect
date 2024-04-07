@@ -12,6 +12,8 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <UIKit/UIKit.h>
 #import <IOKit/IOKitLib.h>
+#import <AudioToolbox/AudioServices.h>
+#import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <unistd.h>
 
 NSString *KDECONNECT_DATA_PATH;
@@ -123,6 +125,17 @@ void clipboard_callback(char *device_id, char *clipboard) {
   kdeconnect_free_string(device_id);
 }
 
+void find_callback() {
+  NSLog(@"i am lost!");
+  // TODO: Allow user to dismiss this via a notification/alert
+  while (kdeconnect_get_is_lost()) {
+    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+    AudioServicesPlaySystemSound(1151);
+    sleep(1);
+  }
+  NSLog(@"i am no longer lost!");
+}
+
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
   @autoreleasepool {
     if (trollstore) {
@@ -188,6 +201,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     kdeconnect_register_pair_status_changed_callback(pair_status_changed_callback);
     kdeconnect_register_battery_callback(battery_callback);
     kdeconnect_register_clipboard_callback(clipboard_callback);
+    kdeconnect_register_find_callback(find_callback);
 
     NSThread *thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
