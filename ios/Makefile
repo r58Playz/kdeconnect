@@ -1,4 +1,5 @@
 TARGET := iphone:clang:latest:15.0
+INSTALL_TARGET_PROCESSES = kdeconnectd
 
 ARCHS = arm64
 
@@ -7,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = kdeconnectd
 
 kdeconnectd_FILES = $(wildcard *.m) $(wildcard *.swift)
-kdeconnectd_CFLAGS = -fobjc-arc -I../target/
+kdeconnectd_CFLAGS = -fobjc-arc -I../target/ -I.
 kdeconnectd_CODESIGN_FLAGS = -Sentitlements.plist
 kdeconnectd_INSTALL_PATH = /usr/local/bin
 kdeconnectd_LD_FLAGS = -lkdeconnectjb
@@ -22,5 +23,5 @@ endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
 SUBPROJECTS += app
-
+SUBPROJECTS += tweak 
 include $(THEOS_MAKE_PATH)/aggregate.mk

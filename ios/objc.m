@@ -5,6 +5,7 @@
 #import "headers/kern_memorycontrol.h"
 
 #import "kdeconnectjb.h"
+#import "server.h"
 
 #import "rootless.h"
 
@@ -14,9 +15,12 @@
 #import <IOKit/IOKitLib.h>
 #import <AudioToolbox/AudioServices.h>
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
+#import <AppSupport/CPDistributedMessagingCenter.h>
 #import <unistd.h>
 
+bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
+CPDistributedMessagingCenter *tweakMessageCenter;
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -125,9 +129,22 @@ void clipboard_callback(char *device_id, char *clipboard) {
   kdeconnect_free_string(device_id);
 }
 
+void ping_callback(char *device_id) {
+  KConnectFfiDevice_t *device_by_id;
+  if (!TROLLSTORE && 
+      (device_by_id = kdeconnect_get_device_by_id(device_id))) {
+    [tweakMessageCenter sendMessageName:@"ping" userInfo:@{ @"name":[NSString stringWithUTF8String:device_by_id->name] }];
+    kdeconnect_free_device(device_by_id);
+  }
+  kdeconnect_free_string(device_id);
+}
+
 void find_callback() {
   NSLog(@"i am lost!");
-  // TODO: Allow user to dismiss this via a notification/alert
+  if (!TROLLSTORE) {
+    [tweakMessageCenter sendMessageName:@"lost" userInfo:nil];
+    NSLog(@"sent message to tweak telling it i am lost!");
+  }
   while (kdeconnect_get_is_lost()) {
     AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
     AudioServicesPlaySystemSound(1151);
@@ -138,6 +155,7 @@ void find_callback() {
 
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
   @autoreleasepool {
+    TROLLSTORE = trollstore;
     if (trollstore) {
       NSLog(@"Starting as TrollStore daemon");
       NSLog(@"[Flotsam:INFO] Hammer time.");
@@ -181,6 +199,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       }
     } else {
       NSLog(@"Starting as JB daemon");
+      tweakMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.springboard"];
     }
 
     KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
@@ -201,9 +220,10 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     kdeconnect_register_pair_status_changed_callback(pair_status_changed_callback);
     kdeconnect_register_battery_callback(battery_callback);
     kdeconnect_register_clipboard_callback(clipboard_callback);
+    kdeconnect_register_ping_callback(ping_callback);
     kdeconnect_register_find_callback(find_callback);
 
-    NSThread *thread = [[NSThread alloc] initWithBlock:^void() {
+    NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
         (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
         deviceName,
@@ -214,7 +234,13 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       exit(res);
     }];
 
-    [thread start];
+    [kdeconnect_thread start];
+
+    NSThread *message_thread = [[NSThread alloc] initWithBlock:^void() {
+      [KConnectServer load];
+    }];
+
+    [message_thread start];
 
     // TODO: Subscribe to clipboard events and send those over
     CFRunLoopSourceRef powerLoop =
