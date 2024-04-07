@@ -14,6 +14,7 @@
 #import <UIKit/UIKit.h>
 #import <IOKit/IOKitLib.h>
 #import <AudioToolbox/AudioServices.h>
+#import <AVFAudio/AVAudioPlayer.h>
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <AppSupport/CPDistributedMessagingCenter.h>
 #import <unistd.h>
@@ -145,20 +146,24 @@ void find_callback() {
     [tweakMessageCenter sendMessageName:@"lost" userInfo:nil];
     NSLog(@"sent message to tweak telling it i am lost!");
   }
-  SystemSoundID findMyId = 0;
-  CFURLRef url = CFURLCreateWithString(NULL, CFSTR("/System/Library/PrivateFrameworks/FindMyDevice.framework/fmd_sound.caf"), NULL);
-  OSStatus status = AudioServicesCreateSystemSoundID(url, &findMyId);
-  CFRelease(url);
-  NSLog(@"created sound id: %d with status: %d", findMyId, status);
+
+  [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback
+                                         error:nil];
+  [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker
+                                                     error:nil];
+
+  NSURL *url = [NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/FindMyDevice.framework/fmd_sound.caf"];
+  AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:url
+                                                                 error:nil];
+  player.numberOfLoops = -1;
+
+  [player play];
   while (kdeconnect_get_is_lost()) {
     AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
-    if (status == 0) {
-      AudioServicesPlaySystemSound(findMyId);
-    } else {
-      AudioServicesPlaySystemSound(1151);
-    }
-    usleep(1500000);
+    usleep(500000);
   }
+  [player stop];
+
   NSLog(@"i am no longer lost!");
 }
 
