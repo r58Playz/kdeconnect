@@ -145,10 +145,19 @@ void find_callback() {
     [tweakMessageCenter sendMessageName:@"lost" userInfo:nil];
     NSLog(@"sent message to tweak telling it i am lost!");
   }
+  SystemSoundID findMyId = 0;
+  CFURLRef url = CFURLCreateWithString(NULL, CFSTR("/System/Library/PrivateFrameworks/FindMyDevice.framework/fmd_sound.caf"), NULL);
+  OSStatus status = AudioServicesCreateSystemSoundID(url, &findMyId);
+  CFRelease(url);
+  NSLog(@"created sound id: %d with status: %d", findMyId, status);
   while (kdeconnect_get_is_lost()) {
     AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
-    AudioServicesPlaySystemSound(1151);
-    sleep(1);
+    if (status == 0) {
+      AudioServicesPlaySystemSound(findMyId);
+    } else {
+      AudioServicesPlaySystemSound(1151);
+    }
+    usleep(1500000);
   }
   NSLog(@"i am no longer lost!");
 }
