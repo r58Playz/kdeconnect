@@ -1,7 +1,11 @@
+// vim: tabstop=2 shiftwidth=2
+#import <AppSupport/CPDistributedMessagingCenter.h>
 #import <Foundation/Foundation.h>
 #import <mach-o/dyld.h>
 #import <spawn.h>
 #import <sys/sysctl.h>
+
+CPDistributedMessagingCenter *daemonMessageCenter;
 
 #define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
 extern int posix_spawnattr_set_persona_np(const posix_spawnattr_t *__restrict,
@@ -44,4 +48,12 @@ int spawnRoot(NSString *path, NSArray *args) {
   }
 
   return 0;
+}
+
+void createMessageCenter() {
+  daemonMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.daemon"];
+}
+
+NSArray *getConnectedDevices() {
+    return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_list" userInfo:nil] objectForKey:@"info"];
 }

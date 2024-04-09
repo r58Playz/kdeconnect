@@ -26,6 +26,7 @@
 
 		[messagingCenter registerForMessageName:@"no_longer_lost" target:self selector:@selector(noLongerLost:)];
 		[messagingCenter registerForMessageName:@"paired_device_list" target:self selector:@selector(getPairedDeviceList:)];
+		[messagingCenter registerForMessageName:@"connected_device_list" target:self selector:@selector(getConnectedDeviceList:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
@@ -44,6 +45,24 @@
     }];
   }
   kdeconnect_free_paired_device_list(devicesVec);
+  return @{@"info": devices};
+}
+
+- (NSDictionary*)getConnectedDeviceList:(NSString *)name {
+  NSMutableArray *devices = [NSMutableArray new];
+  Vec_KConnectFfiDevice_t devicesVec = kdeconnect_get_connected_device_list();
+  for (int i = 0; i < devicesVec.len; i++) {
+    KConnectFfiDevice_t *device = &devicesVec.ptr[i];
+    [devices          addObject:@{
+                          @"id": [NSString stringWithUTF8String:device->id],
+                        @"name": [NSString stringWithUTF8String:device->name],
+                        @"type": [NSNumber numberWithInt:device->dev_type],
+               @"battery_level": [NSNumber numberWithInt:kdeconnect_device_get_battery_level(device)],
+            @"battery_charging": [NSNumber numberWithBool:kdeconnect_device_get_battery_charging(device)],
+     @"battery_under_threshold": [NSNumber numberWithBool:kdeconnect_device_get_battery_under_threshold(device)],
+    }];
+  }
+  kdeconnect_free_connected_device_list(devicesVec);
   return @{@"info": devices};
 }
 
