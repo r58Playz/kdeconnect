@@ -25,10 +25,26 @@
 		[messagingCenter runServerOnCurrentThread];
 
 		[messagingCenter registerForMessageName:@"no_longer_lost" target:self selector:@selector(noLongerLost:)];
+		[messagingCenter registerForMessageName:@"paired_device_list" target:self selector:@selector(getPairedDeviceList:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
 	return self;
+}
+
+- (NSDictionary*)getPairedDeviceList:(NSString *)name {
+  NSMutableArray *devices = [NSMutableArray new];
+  Vec_KConnectFfiDeviceInfo_t devicesVec = kdeconnect_get_paired_device_list();
+  for (int i = 0; i < devicesVec.len; i++) {
+    KConnectFfiDeviceInfo_t *deviceInfo = &devicesVec.ptr[i];
+    [devices addObject:@{
+                @"id": [NSString stringWithUTF8String:deviceInfo->id],
+              @"name": [NSString stringWithUTF8String:deviceInfo->name],
+              @"type": [NSNumber numberWithInt:deviceInfo->dev_type]
+    }];
+  }
+  kdeconnect_free_paired_device_list(devicesVec);
+  return @{@"info": devices};
 }
 
 - (void)noLongerLost:(NSString *)name {

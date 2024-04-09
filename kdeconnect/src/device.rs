@@ -98,6 +98,12 @@ pub struct DeviceConfig {
     pub certificate: Option<Vec<u8>>,
 }
 
+impl DeviceConfig {
+    pub fn is_paired(&self) -> bool {
+        self.certificate.is_some()
+    }
+}
+
 pub(crate) enum DeviceAction {
     SendPacket(String, oneshot::Sender<Result<()>>),
     GetConfig(oneshot::Sender<DeviceConfig>),
@@ -190,7 +196,7 @@ impl Device {
     }
 
     fn is_paired(&self) -> bool {
-        self.config.certificate.is_some()
+        self.config.is_paired()
     }
 
     async fn inner_task(
@@ -370,7 +376,7 @@ impl DeviceClient {
 
     pub async fn pair(&self) -> Result<()> {
         if self.is_paired().await? {
-            return Err(KdeConnectError::AlreadyPaired);
+            return Err(KdeConnectError::DeviceAlreadyPaired);
         }
         let pair = Pair { pair: true };
         self.send_packet(make_packet_str!(pair)?).await?;

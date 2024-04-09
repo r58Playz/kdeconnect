@@ -10,8 +10,7 @@ use std::{
 };
 
 use device::{
-    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceState,
-    KConnectFfiDeviceType, KConnectHandler,
+    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler
 };
 use kdeconnect::{
     config::FsConfig, packets::Battery, KdeConnect, KdeConnectClient, KdeConnectError,
@@ -36,6 +35,7 @@ static CALLBACKS: Mutex<KConnectCallbacks> = Mutex::const_new(KConnectCallbacks:
 
 struct KConnectState {
     client: KdeConnectClient,
+    config: Arc<FsConfig>,
     devices: Vec<KConnectDevice>,
     current_battery: Battery,
     current_clipboard: String,
@@ -43,9 +43,10 @@ struct KConnectState {
 }
 
 impl KConnectState {
-    pub fn new(client: KdeConnectClient) -> Self {
+    pub fn new(client: KdeConnectClient, config: Arc<FsConfig>) -> Self {
         Self {
             client,
+            config,
             devices: Vec::new(),
             current_battery: Battery {
                 charge: -1,
@@ -229,6 +230,7 @@ pub extern "C" fn kdeconnect_start(
                     config_path.to_string().into(),
                     "server_cert".into(),
                     "server_keypair".into(),
+                    "devices".into(),
                 )
                 .await?,
             );
@@ -236,11 +238,14 @@ pub extern "C" fn kdeconnect_start(
                 device_id.to_string(),
                 device_name.to_string(),
                 device_type.into(),
-                config_provider,
+                config_provider.clone(),
             )
             .await?;
 
-            STATE.lock().await.replace(KConnectState::new(client));
+            STATE
+                .lock()
+                .await
+                .replace(KConnectState::new(client, config_provider));
 
             info!("created kdeconnect client");
 
@@ -345,10 +350,51 @@ pub extern "C" fn kdeconnect_set_is_lost(is_lost: bool) -> bool {
     }
 }
 
-/// Device lists must be freed with kdeconnect_free_device_list. Calling kdeconnect_free_device to
+/// Device lists must be freed with kdeconnect_free_paired_device_list. Calling kdeconnect_free_device to
 /// free a device from a device list is UB.
 #[ffi_export]
-pub extern "C" fn kdeconnect_get_device_list() -> repr_c::Vec<KConnectFfiDevice> {
+pub extern "C" fn kdeconnect_get_paired_device_list() -> repr_c::Vec<KConnectFfiDeviceInfo> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let devices = STATE
+                .lock()
+                .await
+                .as_ref()
+                .ok_or(KdeConnectError::Other)?
+                .config
+                .retrieve_all_device_configs()
+                .await?;
+
+            let mut out = Vec::new();
+
+            for device in devices.iter().filter(|x| x.is_paired()) {
+                out.push(KConnectFfiDeviceInfo {
+                    dev_type: device.device_type.into(),
+                    // this should never fail
+                    id: device.id.clone().try_into().unwrap(),
+                    // this should never fail
+                    name: device.name.clone().try_into().unwrap(),
+                })
+            }
+
+            Ok::<Vec<KConnectFfiDeviceInfo>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_paired_device_list(devices: repr_c::Vec<KConnectFfiDeviceInfo>) {
+    drop(devices);
+}
+
+/// Device lists must be freed with kdeconnect_free_connected_device_list. Calling kdeconnect_free_device to
+/// free a device from a device list is UB.
+#[ffi_export]
+pub extern "C" fn kdeconnect_get_connected_device_list() -> repr_c::Vec<KConnectFfiDevice> {
     if let Ok(rt) = build_runtime!() {
         rt.block_on(async {
             let mut locked = STATE.lock().await;
@@ -380,7 +426,7 @@ pub extern "C" fn kdeconnect_get_device_list() -> repr_c::Vec<KConnectFfiDevice>
 }
 
 #[ffi_export]
-pub extern "C" fn kdeconnect_free_device_list(devices: repr_c::Vec<KConnectFfiDevice>) {
+pub extern "C" fn kdeconnect_free_connected_device_list(devices: repr_c::Vec<KConnectFfiDevice>) {
     drop(devices);
 }
 

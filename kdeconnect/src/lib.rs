@@ -66,13 +66,15 @@ pub enum KdeConnectError {
     NoPeerCerts,
     #[error("Server task already started")]
     ServerAlreadyStarted,
+    #[error("Failed to convert OsString to str")]
+    OsStringConversionError,
     #[error("Other")]
     Other,
 
     #[error("Device rejected pair")]
     DeviceRejectedPair,
     #[error("Already paired")]
-    AlreadyPaired,
+    DeviceAlreadyPaired,
 }
 
 impl<T> From<mpsc::error::SendError<T>> for KdeConnectError {

@@ -187,6 +187,14 @@ impl From<KConnectFfiDeviceType> for DeviceType {
 
 #[derive_ReprC]
 #[repr(C)]
+pub struct KConnectFfiDeviceInfo {
+    pub id: char_p::Box,
+    pub name: char_p::Box,
+    pub dev_type: KConnectFfiDeviceType,
+}
+
+#[derive_ReprC]
+#[repr(C)]
 pub struct KConnectFfiDevice {
     pub id: char_p::Box,
     pub name: char_p::Box,
