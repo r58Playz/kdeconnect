@@ -23,7 +23,7 @@ endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
 SUBPROJECTS += app
-ifneq ($(TROLLSTORE),1)
+ifneq ($(PACKAGE_FORMAT),ipa)
 SUBPROJECTS += tweak
 endif
 include $(THEOS_MAKE_PATH)/aggregate.mk
