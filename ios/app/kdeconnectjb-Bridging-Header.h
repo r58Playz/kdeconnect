@@ -9,3 +9,4 @@ int spawnRoot(NSString *path, NSArray *args);
 
 void createMessageCenter();
 NSArray *getConnectedDevices();
+NSArray *sysctl_ps(void);

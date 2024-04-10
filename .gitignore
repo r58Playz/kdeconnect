@@ -1,3 +1,10 @@
+# build files
 ios/.theos/
 ios/packages/
 target/
+
+# idk what the compiler was smoking
+*.d
+*.o
+*.swiftdeps
+*.swiftdeps~

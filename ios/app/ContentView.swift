@@ -9,21 +9,34 @@ struct ContentView: View {
     @State var connected: [Device] = [];
     init() {
         createMessageCenter()
-        self.refreshConnectedDevices()
+        let proc = sysctl_ps() as! [NSDictionary]
+        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
+        if kdeconnectd != nil {
+            do {
+                try self.refreshConnectedDevices()
+            } catch {
+                UIApplication.shared.alert(body: error.localizedDescription)
+            }
+        }
     }
-    func refreshConnectedDevices() { 
-        var connectedArr = getConnectedDevices() as! [NSDictionary]
-        self.connected = connectedArr.map { 
-            var name = $0.value(forKey: "name")! as! String
-            var id = $0.value(forKey: "id")! as! String
-            var device = Device(name: name, id: id)
-            return device 
+    func refreshConnectedDevices() throws {
+        guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
+            throw "Error getting connected devices"
+        }
+        self.connected = try connectedArr.map {
+            if let name = $0.value(forKey: "name") as? String,
+               let id = $0.value(forKey: "id") as? String {
+                let device = Device(name: name, id: id)
+                return device
+            } else {
+             throw "Error parsing connected devices"
+            }
         }
     }
 	var body: some View {
         NavigationView {
             VStack {
-                Button("Start daemon (TrollStore only)") {
+                Button("Start daemon (TrollStore only)") { // TODO: Detect if installed via TrollStore
                     let bundlePath = Bundle.main.bundlePath
                     let daemonPath = "\(bundlePath)/kdeconnectd"
                     spawnRoot(daemonPath, [])
@@ -31,7 +44,11 @@ struct ContentView: View {
                 List(self.$connected) { device in
                     Text(device.name.wrappedValue)
                 }.refreshable {
-                    self.refreshConnectedDevices()
+                    do {
+                        try self.refreshConnectedDevices()
+                    } catch {
+                        UIApplication.shared.alert(body: error.localizedDescription)
+                    }
                 }
             }
             .padding()
