@@ -27,3 +27,8 @@ ifneq ($(PACKAGE_FORMAT),ipa)
 SUBPROJECTS += tweak
 endif
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+internal-package::
+ifeq ($(PACKAGE_FORMAT),ipa)
+	cp .theos/_/usr/local/bin/kdeconnectd .theos/_/Payload/kdeconnectjb.app/
+endif

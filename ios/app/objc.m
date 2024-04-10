@@ -58,6 +58,10 @@ NSArray *getConnectedDevices() {
     return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_list" userInfo:nil] objectForKey:@"info"];
 }
 
+NSArray *getPairedDevices() {
+    return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:nil] objectForKey:@"info"];
+}
+
 #import <sys/sysctl.h>
 #define PROC_PIDPATHINFO                11
 #define PROC_PIDPATHINFO_SIZE           (MAXPATHLEN)
