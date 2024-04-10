@@ -39,7 +39,14 @@ struct ContentView: View {
                 Button("Start daemon (TrollStore only)") { // TODO: Detect if installed via TrollStore
                     let bundlePath = Bundle.main.bundlePath
                     let daemonPath = "\(bundlePath)/kdeconnectd"
-                    spawnRoot(daemonPath, [])
+                    if !FileManager.default.fileExists(atPath: daemonPath) {
+                        UIApplication.shared.alert(body: "Daemon not found")
+                        return
+                    }
+                    let ret = spawnRoot(daemonPath, [])
+                    if ret != 0 {
+                        UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
+                    }
                 }
                 List(self.$connected) { device in
                     Text(device.name.wrappedValue)
