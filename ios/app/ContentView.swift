@@ -40,32 +40,26 @@ struct ConnectedDevice: Identifiable {
 
 func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
     if device.batteryLevel.wrappedValue > 75 {
-        return "battery.100percent"
+        return "battery.100"
     } else if device.batteryLevel.wrappedValue > 50 {
-        return "battery.75percent"
+        return "battery.75"
     } else if device.batteryLevel.wrappedValue > 25 {
-        return "battery.50percent"
+        return "battery.50"
     } else if device.batteryLevel.wrappedValue > 0 {
-        return "battery.25percent"
+        return "battery.25"
     } else {
-        return "battery.0percent"
+        return "battery.0"
     }
 }
 
 struct ContentView: View {
     @State var connected: [ConnectedDevice] = []
+    @State var paired: [PairedDevice] = []
     init() {
         createMessageCenter()
-        let proc = sysctl_ps() as! [NSDictionary]
-        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
-        if kdeconnectd != nil {
-            do {
-                try self.refreshConnectedDevices()
-            } catch {
-                UIApplication.shared.alert(body: error.localizedDescription)
-            }
-        }
+        refreshDevicesViews()
     }
+
     func refreshConnectedDevices() throws {
         guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
             throw "Error getting connected devices"
@@ -94,10 +88,10 @@ struct ContentView: View {
     }
 
     func refreshPairedDevices() throws {
-        guard let paired = getPairedDevices() as? [NSDictionary] else {
+        guard let pairedArr = getPairedDevices() as? [NSDictionary] else {
             throw "Error getting paired devices"
         }
-        let pairedMapped = try paired.map {
+        let pairedMapped = try pairedArr.map {
             if let name = $0.value(forKey: "name") as? String,
                 let id = $0.value(forKey: "id") as? String,
                 let type = $0.value(forKey: "type") as? Int,
@@ -112,7 +106,25 @@ struct ContentView: View {
                 throw "Error parsing paired devices"
             }
         }
+        let pairedFiltered = pairedMapped.filter { el in
+            !connected.contains(where: { $0.id == el.id })
+        }
+        self.paired = pairedFiltered;
     }
+
+    func refreshDevicesViews() {
+        let proc = sysctl_ps() as! [NSDictionary]
+        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
+        if kdeconnectd != nil {
+            do {
+                try self.refreshConnectedDevices()
+                try self.refreshPairedDevices()
+            } catch {
+                UIApplication.shared.alert(body: error.localizedDescription)
+            }
+        }
+    }
+
 	var body: some View {
         NavigationView {
             VStack {
@@ -121,22 +133,31 @@ struct ContentView: View {
                         ForEach(self.$connected) { device in
                             HStack {
                                 Image(systemName: device.type.wrappedValue.toSFSymbol())
-                                // this doesn't work??
                                 if device.batteryCharging.wrappedValue {
-                                    Image(systemName: "battery.100percent.bolt").foregroundStyle(.green)
+                                    Image(systemName: "battery.100.bolt").foregroundStyle(.green)
                                 } else if device.batteryLow.wrappedValue {
                                     Image(systemName: batteryToSFSymbol(device: device)).foregroundStyle(.red)
                                 } else {
                                     Image(systemName: batteryToSFSymbol(device: device))
                                 }
-                                VStack {
-                                    Text(device.name.wrappedValue)
+                                Text(device.batteryLevel.wrappedValue, format: .percent)
+                                VStack(alignment: .leading) {
+                                    Text(device.name.wrappedValue).lineLimit(1).truncationMode(.tail)
+                                    Text(device.id.wrappedValue).font(.caption).lineLimit(1).truncationMode(.tail)
                                 }
                             }
                         }
                     }
                     Section(header: Text("Paired devices")) {
-
+                        ForEach(self.$paired) { device in
+                            HStack {
+                                Image(systemName: device.type.wrappedValue.toSFSymbol())
+                                VStack(alignment: .leading) {
+                                    Text(device.name.wrappedValue).lineLimit(1).truncationMode(.tail)
+                                    Text(device.id.wrappedValue).font(.caption).lineLimit(1).truncationMode(.tail)
+                                }
+                            }
+                        }
                     }
                     Section(header: Text("Settings")) {
                         Button("Start daemon (TrollStore only)") { // TODO: Detect if installed via TrollStore
@@ -160,11 +181,7 @@ struct ContentView: View {
                 }
                 .listStyle(InsetGroupedListStyle())
                 .refreshable {
-                    do {
-                        try self.refreshConnectedDevices()
-                    } catch {
-                        UIApplication.shared.alert(body: error.localizedDescription)
-                    }
+                    refreshDevicesViews()
                 }
             }
             .navigationTitle("KDE Connect")
