@@ -22,6 +22,7 @@
 bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
 CPDistributedMessagingCenter *tweakMessageCenter;
+CPDistributedMessagingCenter *appMessageCenter;
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -84,7 +85,7 @@ void discovered_callback(char* device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"retrieved discovered device: %s", device_by_id->name);
-    // TODO: Send this over to the app (@bomberfish)
+    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -108,7 +109,7 @@ void pair_status_changed_callback(char* device_id, bool pair_status) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"device `%s` pair status changed to: %s", device_by_id->name, pair_status ? "paired" : "not paired");
-    // TODO: Send this over to the app (@bomberfish)
+    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -118,7 +119,7 @@ void battery_callback(char *device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"device sent battery data: %s", device_by_id->name);
-    // TODO: Send this over to the app (@bomberfish)
+    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -127,6 +128,7 @@ void battery_callback(char *device_id) {
 void clipboard_callback(char *device_id, char *clipboard) {
   NSLog(@"clipboard data recieved from device_id: `%s` data: `%s`", device_id, clipboard);
   // TODO: Set system clipboard here
+  [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
   kdeconnect_free_string(device_id);
 }
 
@@ -215,6 +217,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       NSLog(@"Starting as JB daemon");
       tweakMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.springboard"];
     }
+    appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
 
     KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
     NSString *deviceId = getDeviceId();

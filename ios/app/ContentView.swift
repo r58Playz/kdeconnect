@@ -23,13 +23,13 @@ enum DeviceType: Int{
     }
 }
 
-struct PairedDevice: Identifiable {
+struct PairedDevice: Identifiable, Equatable {
     var name: String
     var id: String
     var type: DeviceType 
 }
 
-struct ConnectedDevice: Identifiable {
+struct ConnectedDevice: Identifiable, Equatable {
     var name: String
     var id: String
     var type: DeviceType
@@ -52,12 +52,25 @@ func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
     }
 }
 
+@objc public class KConnectSwiftServer: NSObject {
+    var view: ContentView
+    init(view: ContentView) {
+        self.view = view
+    }
+
+    @objc func refreshRequested() {
+        self.view.refreshDevicesViews()
+    }
+}
+
 struct ContentView: View {
     @State var connected: [ConnectedDevice] = []
     @State var paired: [PairedDevice] = []
+    @State var server: KConnectObjcServer! = nil
+
     init() {
+        self.server = KConnectObjcServer.new(withSwift: KConnectSwiftServer(view: self));
         createMessageCenter()
-        refreshDevicesViews()
     }
 
     func refreshConnectedDevices() throws {

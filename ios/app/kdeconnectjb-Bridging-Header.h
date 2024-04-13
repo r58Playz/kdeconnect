@@ -11,3 +11,11 @@ NSArray *getConnectedDevices();
 NSArray *getPairedDevices();
 
 NSArray *sysctl_ps(void);
+
+@class KConnectSwiftServer;
+
+@interface KConnectObjcServer : NSObject
+@property (nonatomic, strong) KConnectSwiftServer *swift;
++(id)newWithSwift:(KConnectSwiftServer*)swift;
+@end
+

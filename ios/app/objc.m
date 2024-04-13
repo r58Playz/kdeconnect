@@ -4,6 +4,7 @@
 #import <mach-o/dyld.h>
 #import <spawn.h>
 #import <sys/sysctl.h>
+#import <kdeconnectjb-Swift.h>
 
 CPDistributedMessagingCenter *daemonMessageCenter;
 
@@ -61,6 +62,31 @@ NSArray *getConnectedDevices() {
 NSArray *getPairedDevices() {
     return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:nil] objectForKey:@"info"];
 }
+
+@interface KConnectObjcServer : NSObject
+@property (nonatomic, strong) KConnectSwiftServer *swift;
+@end
+
+@implementation KConnectObjcServer 
++ (id)newWithSwift:(KConnectSwiftServer*) swift {
+  return [[self alloc] initWithSwift:swift];
+}
+- (id)initWithSwift:(KConnectSwiftServer*) swift {
+	if ((self = [super init])) {
+    self.swift = swift;
+		CPDistributedMessagingCenter * messagingCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
+		[messagingCenter runServerOnCurrentThread];
+
+    [messagingCenter registerForMessageName:@"refresh" target:self selector:@selector(refresh:)];
+    NSLog(@"registered CPDistributedMessagingCenter"); 
+	}
+
+	return self;
+}
+- (void)refresh:(NSString*)refresh {
+  [self.swift refreshRequested];
+}
+@end
 
 #import <sys/sysctl.h>
 #define PROC_PIDPATHINFO                11
