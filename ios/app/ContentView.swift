@@ -63,21 +63,35 @@ func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
     }
 }
 
+class ContentViewModel: ObservableObject {
+    @Published var connected = [ConnectedDevice]()
+    @Published var paired = [PairedDevice]()
+}
+
 struct ContentView: View {
-    @State var connected: [ConnectedDevice] = []
-    @State var paired: [PairedDevice] = []
+    @ObservedObject var data = ContentViewModel()
     @State var server: KConnectObjcServer! = nil
 
     init() {
         self.server = KConnectObjcServer.new(withSwift: KConnectSwiftServer(view: self));
         createMessageCenter()
+        let proc = sysctl_ps() as! [NSDictionary]
+        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
+        if kdeconnectd != nil {
+            do {
+                try self.refreshConnectedDevices()
+                try self.refreshPairedDevices()
+            } catch {
+                // ignore
+            }
+        }
     }
 
     func refreshConnectedDevices() throws {
         guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
             throw "Error getting connected devices"
         }
-        self.connected = try connectedArr.map {
+        let connectedMapped = try connectedArr.map {
             if let name = $0.value(forKey: "name") as? String,
                 let id = $0.value(forKey: "id") as? String,
                 let type = $0.value(forKey: "type") as? Int,
@@ -98,6 +112,7 @@ struct ContentView: View {
                 throw "Error parsing connected devices"
             }
         }
+        self.data.connected = connectedMapped
     }
 
     func refreshPairedDevices() throws {
@@ -120,9 +135,9 @@ struct ContentView: View {
             }
         }
         let pairedFiltered = pairedMapped.filter { el in
-            !connected.contains(where: { $0.id == el.id })
+            !data.connected.contains(where: { $0.id == el.id })
         }
-        self.paired = pairedFiltered;
+        self.data.paired = pairedFiltered
     }
 
     func refreshDevicesViews() {
@@ -130,6 +145,7 @@ struct ContentView: View {
         let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
         if kdeconnectd != nil {
             do {
+                rebroadcast()
                 try self.refreshConnectedDevices()
                 try self.refreshPairedDevices()
             } catch {
@@ -143,31 +159,31 @@ struct ContentView: View {
             VStack {
                 List {
                     Section(header: Text("Connected devices")) {
-                        ForEach(self.$connected) { device in
+                        ForEach(self.$data.connected, id: \.id) { $device in
                             HStack {
-                                Image(systemName: device.type.wrappedValue.toSFSymbol())
-                                if device.batteryCharging.wrappedValue {
+                                Image(systemName: device.type.toSFSymbol())
+                                if device.batteryCharging {
                                     Image(systemName: "battery.100.bolt").foregroundStyle(.green)
-                                } else if device.batteryLow.wrappedValue {
-                                    Image(systemName: batteryToSFSymbol(device: device)).foregroundStyle(.red)
+                                } else if device.batteryLow {
+                                    Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
                                 } else {
-                                    Image(systemName: batteryToSFSymbol(device: device))
+                                    Image(systemName: batteryToSFSymbol(device: $device))
                                 }
-                                Text(device.batteryLevel.wrappedValue, format: .percent)
+                                Text(device.batteryLevel, format: .percent)
                                 VStack(alignment: .leading) {
-                                    Text(device.name.wrappedValue).lineLimit(1).truncationMode(.tail)
-                                    Text(device.id.wrappedValue).font(.caption).lineLimit(1).truncationMode(.tail)
+                                    Text(device.name).lineLimit(1).truncationMode(.tail)
+                                    Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
                                 }
                             }
                         }
                     }
                     Section(header: Text("Paired devices")) {
-                        ForEach(self.$paired) { device in
+                        ForEach(self.$data.paired, id: \.id) { $device in
                             HStack {
-                                Image(systemName: device.type.wrappedValue.toSFSymbol())
+                                Image(systemName: device.type.toSFSymbol())
                                 VStack(alignment: .leading) {
-                                    Text(device.name.wrappedValue).lineLimit(1).truncationMode(.tail)
-                                    Text(device.id.wrappedValue).font(.caption).lineLimit(1).truncationMode(.tail)
+                                    Text(device.name).lineLimit(1).truncationMode(.tail)
+                                    Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
                                 }
                             }
                         }

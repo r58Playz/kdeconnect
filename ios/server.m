@@ -27,6 +27,8 @@
 		[messagingCenter registerForMessageName:@"no_longer_lost" target:self selector:@selector(noLongerLost:)];
 		[messagingCenter registerForMessageName:@"paired_device_list" target:self selector:@selector(getPairedDeviceList:)];
 		[messagingCenter registerForMessageName:@"connected_device_list" target:self selector:@selector(getConnectedDeviceList:)];
+    [messagingCenter registerForMessageName:@"connected_device_info" target:self selector:@selector(getConnectedDeviceInfo:userInfo:)];
+		[messagingCenter registerForMessageName:@"rebroadcast" target:self selector:@selector(rebroadcast:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
@@ -66,7 +68,29 @@
   return @{@"info": devices};
 }
 
+- (NSDictionary*)getConnectedDeviceInfo:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    NSDictionary *deviceInfo = @{
+                          @"id": [NSString stringWithUTF8String:device->id],
+                        @"name": [NSString stringWithUTF8String:device->name],
+                        @"type": [NSNumber numberWithInt:device->dev_type],
+               @"battery_level": [NSNumber numberWithInt:kdeconnect_device_get_battery_level(device)],
+            @"battery_charging": [NSNumber numberWithBool:kdeconnect_device_get_battery_charging(device)],
+     @"battery_under_threshold": [NSNumber numberWithBool:kdeconnect_device_get_battery_under_threshold(device)],
+    }; 
+    kdeconnect_free_device(device);
+    return deviceInfo;
+  }
+  return @{};
+}
+
 - (void)noLongerLost:(NSString *)name {
   kdeconnect_set_is_lost(false);
+}
+
+- (void)rebroadcast:(NSString *)name {
+  kdeconnect_broadcast_identity();
 }
 @end

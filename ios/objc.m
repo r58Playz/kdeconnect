@@ -76,8 +76,9 @@ void powerSourceCallback(void *context) {
 }
 
 void initialized_callback() { 
-  NSLog(@"initialized, sending battery data");
+  NSLog(@"initialized, sending battery data & telling app");
   powerSourceCallback(NULL);
+  [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
 }
 
 void discovered_callback(char* device_id) {

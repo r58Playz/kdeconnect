@@ -56,11 +56,19 @@ void createMessageCenter() {
 }
 
 NSArray *getConnectedDevices() {
-    return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_list" userInfo:nil] objectForKey:@"info"];
+  return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_list" userInfo:nil] objectForKey:@"info"];
 }
 
 NSArray *getPairedDevices() {
-    return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:nil] objectForKey:@"info"];
+  return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:nil] objectForKey:@"info"];
+}
+
+NSDictionary *getDeviceInfo(NSString *id) {
+  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:@{@"id":id}];
+}
+
+void rebroadcast() {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"rebroadcast" userInfo:nil];
 }
 
 @interface KConnectObjcServer : NSObject
