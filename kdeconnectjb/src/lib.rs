@@ -615,10 +615,8 @@ pub extern "C" fn kdeconnect_on_battery_event(
 }
 
 #[ffi_export]
-pub extern "C" fn kdeconnect_on_clipboard_event(content: char_p::Box) -> bool {
-    info!("recieved clipboard data: {:?}", content);
-
-    let content = content.into_string();
+pub extern "C" fn kdeconnect_on_clipboard_event(content: char_p::Ref<'_>) -> bool {
+    let content = content.to_string();
 
     if let Ok(rt) = build_runtime!() {
         rt.block_on(async {

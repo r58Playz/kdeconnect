@@ -13,8 +13,20 @@
     <true/>
     <key>com.apple.private.security.storage.AppDataContainers</key>
     <true/>
+
     <key>com.apple.Pasteboard.background-access</key>
     <true/>
+    <key>com.apple.Pasteboard.copy-on-paste</key>
+    <true/>
+    <key>com.apple.Pasteboard.originating-bundle-id-query</key>
+    <true/>
+    <key>com.apple.Pasteboard.paste-unchecked</key>
+    <true/>
+    <key>com.apple.Pasteboard.trusted-authentication-message-request</key>
+    <true/>
+    <key>com.apple.Pasteboard.trusted-bundle-layout</key>
+    <true/>
+
     <key>com.apple.private.ClipServices</key>
     <true/>
     <key>com.apple.private.contacts</key>

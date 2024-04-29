@@ -23,6 +23,7 @@ bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
 CPDistributedMessagingCenter *tweakMessageCenter;
 CPDistributedMessagingCenter *appMessageCenter;
+NSString *CURRENT_CLIPBOARD = @"";
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -76,8 +77,14 @@ void powerSourceCallback(void *context) {
 }
 
 void initialized_callback() { 
-  NSLog(@"initialized, sending battery data & telling app");
+  NSLog(@"initialized, sending data & telling app");
   powerSourceCallback(NULL);
+
+  NSString *clipboard = NULL;
+  if ((clipboard = UIPasteboard.generalPasteboard.string)) {
+    kdeconnect_on_clipboard_event((char*)clipboard.UTF8String);
+  }
+
   [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
 }
 
@@ -128,7 +135,9 @@ void battery_callback(char *device_id) {
 
 void clipboard_callback(char *device_id, char *clipboard) {
   NSLog(@"clipboard data recieved from device_id: `%s` data: `%s`", device_id, clipboard);
-  // TODO: Set system clipboard here
+
+  UIPasteboard.generalPasteboard.string = [NSString stringWithUTF8String:clipboard];
+
   [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
   kdeconnect_free_string(device_id);
 }
@@ -260,10 +269,22 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
 
     [message_thread start];
 
+    CFRunLoopTimerRef clipboardLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 1.0, 0, 0, ^(CFRunLoopTimerRef timer){
+        NSString *clipboard = UIPasteboard.generalPasteboard.string;
+        if (!clipboard) clipboard = @"";
+
+        if (![clipboard isEqualToString:CURRENT_CLIPBOARD]) {
+          NSLog(@"clipboard changed");
+          kdeconnect_on_clipboard_event(clipboard.UTF8String);
+          CURRENT_CLIPBOARD = clipboard;
+        }
+    });
+
     // TODO: Subscribe to clipboard events and send those over
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);
     CFRunLoopAddSource(CFRunLoopGetMain(), powerLoop, kCFRunLoopDefaultMode);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), clipboardLoop, kCFRunLoopDefaultMode);
 
     CFRunLoopRun();
 
