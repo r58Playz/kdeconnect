@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -117,6 +117,12 @@ pub struct Battery {
 }
 derive_type!(Battery, "kdeconnect.battery");
 
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub struct BatteryRequest {
+    pub request: bool,
+}
+derive_type!(BatteryRequest, "kdeconnect.battery.request");
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Clipboard {
     pub content: String,
@@ -133,6 +139,53 @@ derive_type!(ClipboardConnect, "kdeconnect.clipboard.connect");
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct FindPhone {}
 derive_type!(FindPhone, "kdeconnect.findmyphone.request");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectivityReport {
+    pub signal_strengths: HashMap<String, ConnectivityReportSignal>,
+}
+derive_type!(ConnectivityReport, "kdeconnect.connectivity_report");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectivityReportSignal {
+    pub network_type: ConnectivityReportNetworkType,
+    pub signal_strength: i32,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum ConnectivityReportNetworkType {
+    #[serde(rename = "GSM")]
+    Gsm,
+    #[serde(rename = "CDMA")]
+    Cdma,
+    #[serde(rename = "iDEN")]
+    Iden,
+    #[serde(rename = "UMTS")]
+    Umts,
+    #[serde(rename = "CDMA2000")]
+    Cdma2000,
+    #[serde(rename = "EDGE")]
+    Edge,
+    #[serde(rename = "GPRS")]
+    Gprs,
+    #[serde(rename = "HSPA")]
+    Hspa,
+    #[serde(rename = "LTE")]
+    Lte,
+    #[serde(rename = "5G")]
+    FiveG,
+    #[serde(rename = "Unknown")]
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub struct ConnectivityReportRequest {}
+derive_type!(
+    ConnectivityReportRequest,
+    "kdeconnect.connectivity_report.request"
+);
 
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway

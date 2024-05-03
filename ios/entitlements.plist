@@ -35,10 +35,17 @@
     <true/>
     <key>com.apple.CommCenter.fine-grained</key>
     <array>
+        <string>internal</string>
+        <string>notify-all</string>
         <string>spi</string>
+        <string>data-usage</string>
         <string>identity</string>
-        <string>bb-xpc</string>
         <string>phone</string>
+        <string>bb-xpc</string>
+    </array>
+    <key>com.apple.security.exception.mach-lookup.global-name</key>
+    <array>
+        <string>com.apple.commcenter.coretelephony.xpc</string>
     </array>
     <key>com.apple.coreduetd.allow</key>
     <true/>

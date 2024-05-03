@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
-    packets::{Battery, DeviceType, Ping},
+    packets::{Battery, ConnectivityReport, DeviceType, Ping},
 };
 use log::info;
 use safer_ffi::prelude::*;
@@ -55,11 +55,7 @@ impl DeviceHandler for KConnectHandler {
 
     async fn handle_battery(&mut self, packet: Battery) {
         let mut state = self.state.lock().await;
-        state.battery_level.replace(packet.charge);
-        state.battery_charging.replace(packet.is_charging);
-        state
-            .battery_under_threshold
-            .replace(packet.under_threshold);
+        state.battery.replace(packet);
         drop(state);
 
         info!(
@@ -94,6 +90,11 @@ impl DeviceHandler for KConnectHandler {
         }
     }
 
+    async fn handle_connectivity_report(&mut self, packet: ConnectivityReport) {
+        self.state.lock().await.connectivity.replace(packet);
+        // TODO: Add callback for connectivity report
+    }
+
     async fn handle_pairing_request(&mut self) -> bool {
         info!("recieved pair from {:?}", self.config);
         let id = self.id.clone();
@@ -123,6 +124,13 @@ impl DeviceHandler for KConnectHandler {
             .clone()
     }
 
+    async fn get_connectivity_report(&mut self) -> ConnectivityReport {
+        // STATE will always be Some here
+        ConnectivityReport {
+            signal_strengths: STATE.lock().await.as_ref().unwrap().current_signals.clone(),
+        }
+    }
+
     async fn handle_exit(&mut self) {
         // STATE will always be Some here
         STATE
@@ -137,10 +145,9 @@ impl DeviceHandler for KConnectHandler {
 
 #[derive(Default)]
 pub struct KConnectDeviceState {
-    pub battery_level: Option<i32>,
-    pub battery_charging: Option<bool>,
-    pub battery_under_threshold: Option<bool>,
+    pub battery: Option<Battery>,
     pub clipboard: Option<String>,
+    pub connectivity: Option<ConnectivityReport>,
 }
 
 pub struct KConnectDevice {

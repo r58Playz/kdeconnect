@@ -4,16 +4,20 @@ mod utils;
 mod device;
 
 use std::{
+    collections::HashMap,
     error::Error,
     io,
     sync::{Arc, OnceLock},
 };
 
 use device::{
-    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler
+    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceInfo,
+    KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
 };
 use kdeconnect::{
-    config::FsConfig, packets::Battery, KdeConnect, KdeConnectClient, KdeConnectError,
+    config::FsConfig,
+    packets::{Battery, ConnectivityReportNetworkType, ConnectivityReportSignal},
+    KdeConnect, KdeConnectClient, KdeConnectError,
 };
 use log::info;
 #[cfg(target_os = "ios")]
@@ -39,6 +43,7 @@ struct KConnectState {
     devices: Vec<KConnectDevice>,
     current_battery: Battery,
     current_clipboard: String,
+    current_signals: HashMap<String, ConnectivityReportSignal>,
     being_found: bool,
 }
 
@@ -54,6 +59,7 @@ impl KConnectState {
                 under_threshold: false,
             },
             current_clipboard: String::new(),
+            current_signals: HashMap::new(),
             being_found: false,
         }
     }
@@ -477,7 +483,16 @@ pub unsafe extern "C" fn kdeconnect_free_device(device: *mut KConnectFfiDevice) 
 #[ffi_export]
 pub extern "C" fn kdeconnect_device_get_battery_level(device: &KConnectFfiDevice) -> i32 {
     if let Ok(rt) = build_runtime!() {
-        rt.block_on(async { device.state.state.lock().await.battery_level.unwrap_or(-1) })
+        rt.block_on(async {
+            device
+                .state
+                .state
+                .lock()
+                .await
+                .battery
+                .map(|x| x.charge)
+                .unwrap_or(-1)
+        })
     } else {
         -1
     }
@@ -492,7 +507,8 @@ pub extern "C" fn kdeconnect_device_get_battery_charging(device: &KConnectFfiDev
                 .state
                 .lock()
                 .await
-                .battery_charging
+                .battery
+                .map(|x| x.is_charging)
                 .unwrap_or(false)
         })
     } else {
@@ -511,7 +527,8 @@ pub extern "C" fn kdeconnect_device_get_battery_under_threshold(
                 .state
                 .lock()
                 .await
-                .battery_under_threshold
+                .battery
+                .map(|x| x.under_threshold)
                 .unwrap_or(false)
         })
     } else {
@@ -540,6 +557,8 @@ pub extern "C" fn kdeconnect_device_get_clipboard_content(
         "".to_string().try_into().unwrap()
     }
 }
+
+// TODO: Add function to get connectivity report
 
 #[ffi_export]
 pub extern "C" fn kdeconnect_device_send_ping(device: &KConnectFfiDevice) -> bool {
@@ -627,6 +646,77 @@ pub extern "C" fn kdeconnect_on_clipboard_event(content: char_p::Ref<'_>) -> boo
             for device in state.devices.iter() {
                 device.client.send_clipboard_update(content.clone()).await?;
             }
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+fn string_to_connectivity_network_type(net_type: &str) -> ConnectivityReportNetworkType {
+    use ConnectivityReportNetworkType as C;
+    match net_type {
+        "kCTRadioAccessTechnologyGPRS" => C::Gprs,
+        "kCTRadioAccessTechnologyEdge" => C::Edge,
+        // "kCTRadioAccessTechnologyWCDMA" => doesn't match any
+        "kCTRadioAccessTechnologyHSDPA" => C::Hspa,
+        "kCTRadioAccessTechnologyHSUPA" => C::Hspa,
+        "kCTRadioAccessTechnologyCDMA1x" => C::Cdma,
+        // "kCTRadioAccessTechnologyCDMAEVDORev0" => doesn't match any
+        // "kCTRadioAccessTechnologyCDMAEVDORevA" => doesn't match any
+        // "kCTRadioAccessTechnologyCDMAEVDORevB" => doesn't match any
+        // "kCTRadioAccessTechnologyeHRPD" => doesn't match any
+        "kCTRadioAccessTechnologyLTE" => C::Lte,
+        "kCTRadioAccessTechnologyNR" => C::FiveG,
+        "kCTRadioAccessTechnologyNRNSA" => C::FiveG,
+        _ => C::Unknown,
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_clear_connectivity_signals() -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            STATE
+                .lock()
+                .await
+                .as_mut()
+                .ok_or(KdeConnectError::Other)?
+                .current_signals
+                .clear();
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_add_connectivity_signal(
+    id: char_p::Ref<'_>,
+    net_type: char_p::Ref<'_>,
+    signal: i32,
+) -> bool {
+    let id = id.to_string();
+    let net_type = net_type.to_string();
+
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            STATE
+                .lock()
+                .await
+                .as_mut()
+                .ok_or(KdeConnectError::Other)?
+                .current_signals
+                .insert(
+                    id,
+                    ConnectivityReportSignal {
+                        network_type: string_to_connectivity_network_type(&net_type),
+                        signal_strength: signal,
+                    },
+                );
             Ok::<(), KdeConnectError>(())
         })
         .is_ok()

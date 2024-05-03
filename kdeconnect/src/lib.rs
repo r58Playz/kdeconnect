@@ -40,7 +40,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
     device::create_device,
-    packets::{Battery, Clipboard, Ping, PROTOCOL_VERSION},
+    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, Ping, PROTOCOL_VERSION},
     util::NoCertificateVerification,
 };
 
@@ -213,8 +213,20 @@ impl KdeConnect {
             device_name: self.device_name.clone(),
             device_type: self.device_type,
             protocol_version: PROTOCOL_VERSION,
-            incoming_capabilities: vec![Ping::TYPE.to_string(), Battery::TYPE.to_string(), Clipboard::TYPE.to_string()],
-            outgoing_capabilities: vec![Ping::TYPE.to_string(), Battery::TYPE.to_string(), Clipboard::TYPE.to_string()],
+            incoming_capabilities: vec![
+                Ping::TYPE.to_string(),
+                Battery::TYPE.to_string(),
+                Clipboard::TYPE.to_string(),
+                ClipboardConnect::TYPE.to_string(),
+                ConnectivityReport::TYPE.to_string(),
+            ],
+            outgoing_capabilities: vec![
+                Ping::TYPE.to_string(),
+                Battery::TYPE.to_string(),
+                Clipboard::TYPE.to_string(),
+                ClipboardConnect::TYPE.to_string(),
+                ConnectivityReport::TYPE.to_string(),
+            ],
             tcp_port,
         };
         make_packet!(ident)
@@ -379,6 +391,8 @@ impl KdeConnect {
 
     async fn send_on_udp(&self) -> Result<()> {
         info!("broadcasting on udp");
+        // wait until everything else is ready
+        sleep(Duration::from_secs(1)).await;
         loop {
             self.send_identity_once().await?;
             sleep(Duration::from_secs(30)).await;

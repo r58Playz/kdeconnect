@@ -3,6 +3,10 @@
 #import "headers/IOPowerSources.h"
 #import "headers/MobileGestalt.h"
 #import "headers/kern_memorycontrol.h"
+#import "headers/CoreTelephonyClient.h"
+#import "headers/CTSignalStrengthInfo.h"
+#import "headers/CTDataStatus.h"
+#import "headers/CTXPCServiceSubscriptionContext.h"
 
 #import "kdeconnectjb.h"
 #import "server.h"
@@ -15,15 +19,18 @@
 #import <IOKit/IOKitLib.h>
 #import <AudioToolbox/AudioServices.h>
 #import <AVFAudio/AVAudioPlayer.h>
-#import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <AppSupport/CPDistributedMessagingCenter.h>
 #import <unistd.h>
 
 bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
+
+NSString *CURRENT_CLIPBOARD = @"";
+
 CPDistributedMessagingCenter *tweakMessageCenter;
 CPDistributedMessagingCenter *appMessageCenter;
-NSString *CURRENT_CLIPBOARD = @"";
+
+CoreTelephonyClient *telephonyClient;
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -229,6 +236,10 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     }
     appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
 
+    CoreTelephonyClientMux *telephonyClientMux = [CoreTelephonyClient sharedMultiplexer];
+    telephonyClient = [[CoreTelephonyClient alloc] init];
+    [telephonyClient setMux:telephonyClientMux];
+
     KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
     NSString *deviceId = getDeviceId();
     if (!deviceId) {
@@ -252,10 +263,10 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
 
     NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
-        (char*)[deviceId cStringUsingEncoding:NSUTF8StringEncoding],
+        (char*)deviceId.UTF8String,
         deviceName,
         deviceType,
-        (char*)[KDECONNECT_DATA_PATH cStringUsingEncoding:NSUTF8StringEncoding]
+        (char*)KDECONNECT_DATA_PATH.UTF8String
       );
       NSLog(@"Ended OK: %d\n", res);
       exit(res);
@@ -280,11 +291,23 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
         }
     });
 
-    // TODO: Subscribe to clipboard events and send those over
+    CFRunLoopTimerRef connectivityLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 60.0, 0, 0, ^(CFRunLoopTimerRef timer){
+      // TODO: Multiple sims
+      CTXPCServiceSubscriptionContext *context = [CTXPCServiceSubscriptionContext contextWithSlot:1];
+      CTSignalStrengthInfo *info = [telephonyClient getSignalStrengthInfo:context error:NULL];
+      NSString *radioTechnology = [telephonyClient copyRadioAccessTechnology:context error:NULL];
+      kdeconnect_clear_connectivity_signals();
+      if (info && radioTechnology) {
+        kdeconnect_add_connectivity_signal("1", radioTechnology.UTF8String, info.bars.intValue + 1);
+        NSLog(@"added connectivity signal: 1 %@ %d", radioTechnology, info.bars.intValue + 1);
+      }
+    });
+
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);
     CFRunLoopAddSource(CFRunLoopGetMain(), powerLoop, kCFRunLoopDefaultMode);
     CFRunLoopAddTimer(CFRunLoopGetMain(), clipboardLoop, kCFRunLoopDefaultMode);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), connectivityLoop, kCFRunLoopDefaultMode);
 
     CFRunLoopRun();
 

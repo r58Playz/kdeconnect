@@ -23,8 +23,8 @@ use crate::{
     config::ConfigProvider,
     make_packet, make_packet_str,
     packets::{
-        Battery, Clipboard, ClipboardConnect, DeviceType, FindPhone, Identity, Packet, PacketType,
-        Pair, Ping,
+        Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
+        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet, PacketType, Pair, Ping,
     },
     util::get_time_ms,
     KdeConnectError, Result,
@@ -191,6 +191,9 @@ impl Device {
                 timestamp: get_time_ms(),
             };
             self.stream_w.send(make_packet_str!(clipboard)?).await?;
+
+            let connectivity = handler.get_connectivity_report().await;
+            self.stream_w.send(make_packet_str!(connectivity)?).await?;
         }
         Ok(())
     }
@@ -277,6 +280,10 @@ impl Device {
                         Battery::TYPE => {
                             handler.handle_battery(json::from_value(packet.body)?).await;
                         }
+                        BatteryRequest::TYPE => {
+                            let battery = handler.get_battery().await;
+                            self.stream_w.send(make_packet_str!(battery)?).await?;
+                        }
                         Clipboard::TYPE => {
                             let clipboard: Clipboard = json::from_value(packet.body)?;
                             handler.handle_clipboard_content(clipboard.content).await;
@@ -289,6 +296,15 @@ impl Device {
                         }
                         FindPhone::TYPE => {
                             handler.handle_find_phone().await;
+                        }
+                        ConnectivityReport::TYPE => {
+                            handler
+                                .handle_connectivity_report(json::from_value(packet.body)?)
+                                .await;
+                        }
+                        ConnectivityReportRequest::TYPE => {
+                            let connectivity = handler.get_connectivity_report().await;
+                            self.stream_w.send(make_packet_str!(connectivity)?).await?;
                         }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
@@ -362,6 +378,10 @@ impl DeviceClient {
         self.send_packet(make_packet_str!(packet)?).await
     }
 
+    pub async fn send_connectivity_report(&self, packet: ConnectivityReport) -> Result<()> {
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
     pub async fn get_config(&self) -> Result<DeviceConfig> {
         let (tx, rx) = oneshot::channel();
         self.client_w.send(DeviceAction::GetConfig(tx))?;
@@ -404,11 +424,13 @@ pub trait DeviceHandler {
     async fn handle_battery(&mut self, packet: Battery);
     async fn handle_clipboard_content(&mut self, content: String);
     async fn handle_find_phone(&mut self);
+    async fn handle_connectivity_report(&mut self, packet: ConnectivityReport);
 
     async fn handle_pairing_request(&mut self) -> bool;
 
     async fn get_battery(&mut self) -> Battery;
     async fn get_clipboard_content(&mut self) -> String;
+    async fn get_connectivity_report(&mut self) -> ConnectivityReport;
 
     async fn handle_exit(&mut self);
 }
