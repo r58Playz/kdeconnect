@@ -7,6 +7,7 @@
 #import "headers/CTSignalStrengthInfo.h"
 #import "headers/CTDataStatus.h"
 #import "headers/CTXPCServiceSubscriptionContext.h"
+#import "headers/MobileWiFi/MobileWiFi.h"
 
 #import "kdeconnectjb.h"
 #import "server.h"
@@ -25,12 +26,16 @@
 bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
 
+NSMutableArray *TRUSTED_NETWORKS;
 NSString *CURRENT_CLIPBOARD = @"";
 
 CPDistributedMessagingCenter *tweakMessageCenter;
 CPDistributedMessagingCenter *appMessageCenter;
 
 CoreTelephonyClient *telephonyClient;
+
+WiFiManagerRef wifiManager;
+WiFiDeviceClientRef wifiClient;
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -54,6 +59,11 @@ NSDictionary *getPMDict() {
   NSDictionary *dict = (__bridge_transfer NSDictionary *)prop;
   IOObjectRelease(service);
   return dict;
+}
+
+NSString *getWifiNetworkSsid() {
+  WiFiNetworkRef network = WiFiDeviceClientCopyCurrentNetwork(wifiClient);
+  return (__bridge_transfer NSString *)WiFiNetworkGetSSID(network);
 }
 
 bool getBatteryInfo(BatteryInfo *info) {
@@ -188,6 +198,31 @@ void find_callback() {
 
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
   @autoreleasepool {
+    KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
+    NSString *trustedPath = [KDECONNECT_DATA_PATH stringByAppendingString:@"/trusted"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:trustedPath]) {
+      [[NSFileManager defaultManager] createFileAtPath:trustedPath contents:[NSData data] attributes:nil];
+    }
+    TRUSTED_NETWORKS = [[[NSString stringWithContentsOfFile:trustedPath encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
+    [TRUSTED_NETWORKS removeLastObject];
+    NSLog(@"trustedNetworks: %@", TRUSTED_NETWORKS);
+
+    wifiManager = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
+    CFArrayRef devices = WiFiManagerClientCopyDevices(wifiManager);
+    if (!devices) {
+      return 0;
+    }
+    wifiClient = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(devices, 0);
+
+    if (TRUSTED_NETWORKS.count) {
+      NSString *ssid = getWifiNetworkSsid();
+      while (!ssid || ![TRUSTED_NETWORKS containsObject:ssid]) {
+        NSLog(@"Waiting 60 seconds for trusted network");
+        usleep(60000000);
+        ssid = getWifiNetworkSsid();
+      }
+    }
+
     TROLLSTORE = trollstore;
     if (trollstore) {
       NSLog(@"Starting as TrollStore daemon");
@@ -240,7 +275,6 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     telephonyClient = [[CoreTelephonyClient alloc] init];
     [telephonyClient setMux:telephonyClientMux];
 
-    KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
     NSString *deviceId = getDeviceId();
     if (!deviceId) {
       NSLog(@"error: No device id\n");
@@ -280,6 +314,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
 
     [message_thread start];
 
+    // TODO: Replace with Pasteboard.framework?
     CFRunLoopTimerRef clipboardLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 1.0, 0, 0, ^(CFRunLoopTimerRef timer){
         NSString *clipboard = UIPasteboard.generalPasteboard.string;
         if (!clipboard) clipboard = @"";
@@ -303,11 +338,20 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       }
     });
 
+    CFRunLoopTimerRef trustedNetworkLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 10.0, 0, 0, ^(CFRunLoopTimerRef timer){
+      NSString *ssid = getWifiNetworkSsid();
+      if (TRUSTED_NETWORKS.count && (!ssid || ![TRUSTED_NETWORKS containsObject:ssid])) {
+        NSLog(@"no longer on trusted network!!");
+        abort();
+      }
+    });
+
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);
     CFRunLoopAddSource(CFRunLoopGetMain(), powerLoop, kCFRunLoopDefaultMode);
     CFRunLoopAddTimer(CFRunLoopGetMain(), clipboardLoop, kCFRunLoopDefaultMode);
     CFRunLoopAddTimer(CFRunLoopGetMain(), connectivityLoop, kCFRunLoopDefaultMode);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), trustedNetworkLoop, kCFRunLoopDefaultMode);
 
     CFRunLoopRun();
 
