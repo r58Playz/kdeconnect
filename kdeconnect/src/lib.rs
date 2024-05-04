@@ -40,7 +40,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
     device::create_device,
-    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, Ping, PROTOCOL_VERSION},
+    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, FindPhone, Ping, PROTOCOL_VERSION},
     util::NoCertificateVerification,
 };
 
@@ -216,6 +216,7 @@ impl KdeConnect {
             incoming_capabilities: vec![
                 Ping::TYPE.to_string(),
                 Battery::TYPE.to_string(),
+                FindPhone::TYPE.to_string(),
                 Clipboard::TYPE.to_string(),
                 ClipboardConnect::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),
@@ -223,6 +224,7 @@ impl KdeConnect {
             outgoing_capabilities: vec![
                 Ping::TYPE.to_string(),
                 Battery::TYPE.to_string(),
+                FindPhone::TYPE.to_string(),
                 Clipboard::TYPE.to_string(),
                 ClipboardConnect::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),

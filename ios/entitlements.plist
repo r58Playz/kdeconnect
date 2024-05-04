@@ -47,6 +47,10 @@
     <array>
         <string>com.apple.commcenter.coretelephony.xpc</string>
     </array>
+    <key>com.apple.security.exception.mach-register.global-name</key>
+    <array>
+        <string>dev.r58playz.kdeconnectjb.daemon</string>
+    </array>
     <key>com.apple.coreduetd.allow</key>
     <true/>
     <key>com.apple.private.memorystatus</key>

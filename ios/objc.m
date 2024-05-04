@@ -168,7 +168,18 @@ void ping_callback(char *device_id) {
   KConnectFfiDevice_t *device_by_id;
   if (!TROLLSTORE && 
       (device_by_id = kdeconnect_get_device_by_id(device_id))) {
-    [tweakMessageCenter sendMessageName:@"ping" userInfo:@{ @"name":[NSString stringWithUTF8String:device_by_id->name] }];
+    NSString *devName = [NSString stringWithUTF8String:device_by_id->name];
+    NSMutableDictionary *alert = [[NSMutableDictionary alloc] init];
+    [alert addEntriesFromDictionary:@{
+      (__bridge NSString*)kCFUserNotificationAlertHeaderKey:@"KDE Connect",
+      (__bridge NSString*)kCFUserNotificationAlertMessageKey:[@"Recieved ping from device: " stringByAppendingString:devName],
+      (__bridge NSString*)kCFUserNotificationDefaultButtonTitleKey:@"OK",
+    }];
+    CFUserNotificationRef notif = CFUserNotificationCreate(kCFAllocatorDefault, 0, 0, NULL, (__bridge CFMutableDictionaryRef) alert);
+
+    CFOptionFlags cfRes;
+
+    CFUserNotificationReceiveResponse(notif, 0, &cfRes);
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
