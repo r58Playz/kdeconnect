@@ -220,6 +220,7 @@ impl Device {
                             debug!("recieved ping: {:?}", body);
                             handler.handle_ping(body.clone()).await;
                             self.stream_w.send(make_packet_str!(body)?).await?;
+                            self.send_paired_data(handler).await?;
                         }
                         Pair::TYPE => {
                             let body: Pair = json::from_value(packet.body)?;

@@ -68,10 +68,6 @@ impl DeviceHandler for KConnectHandler {
     }
 
     async fn handle_clipboard_content(&mut self, content: String) {
-        info!(
-            "recieved clipboard content: {:?} data: {:#?}",
-            self.config.name, content
-        );
         self.state.lock().await.clipboard.replace(content.clone());
 
         let id = self.id.clone();

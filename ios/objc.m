@@ -50,35 +50,29 @@ typedef struct {
   int charging;
 } BatteryInfo;
 
-NSDictionary *getPMDict() {
-  CFDictionaryRef matching = IOServiceMatching("IOPMPowerSource");
-  io_service_t service =
-      IOServiceGetMatchingService(kIOMasterPortDefault, matching);
-  CFMutableDictionaryRef prop = NULL;
-  IORegistryEntryCreateCFProperties(service, &prop, NULL, 0);
-  NSDictionary *dict = (__bridge_transfer NSDictionary *)prop;
-  IOObjectRelease(service);
-  return dict;
-}
-
 NSString *getWifiNetworkSsid() {
   WiFiNetworkRef network = WiFiDeviceClientCopyCurrentNetwork(wifiClient);
   return (__bridge_transfer NSString *)WiFiNetworkGetSSID(network);
 }
 
 bool getBatteryInfo(BatteryInfo *info) {
-  NSDictionary *dict = getPMDict();
-  if (!dict) {
-    return false;
+  CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
+  if (!powerInfo) return false;
+  CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
+  if (!powerSourcesList) return false;
+
+  if (CFArrayGetCount(powerSourcesList)) {
+    CFDictionaryRef powerSourceInfo = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, 0));
+    CFNumberRef capacityRef = (CFNumberRef)CFDictionaryGetValue(powerSourceInfo, CFSTR("Current Capacity"));
+    uint32_t capacity;
+    if (!CFNumberGetValue(capacityRef, kCFNumberSInt32Type, &capacity)) return false;
+    CFBooleanRef isCharging = (CFBooleanRef) CFDictionaryGetValue(powerSourceInfo, CFSTR("Is Charging"));
+    info->level = capacity;
+    info->charging = CFBooleanGetValue(isCharging);
+    return true;
   }
 
-  info->charging = 0;
-  info->level = 0.0f;
-
-  info->charging = [dict[@"ExternalChargeCapable"] intValue];
-  info->level = [dict[@"CurrentCapacity"] intValue];
-
-  return true;
+  return false;
 }
 
 void powerSourceCallback(void *context) {
@@ -120,11 +114,24 @@ bool pairing_callback(char* device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"retrieved device that wants to pair: %s", device_by_id->name);
-    // TODO: Ask user via alert here (@bomberfish)
+
+    NSString *devName = [NSString stringWithUTF8String:device_by_id->name];
+    NSMutableDictionary *alert = [[NSMutableDictionary alloc] init];
+    [alert addEntriesFromDictionary:@{
+      (__bridge NSString*)kCFUserNotificationAlertHeaderKey:@"KDE Connect",
+      (__bridge NSString*)kCFUserNotificationAlertMessageKey:[@"Recieved pairing request from device: " stringByAppendingString:devName],
+      (__bridge NSString*)kCFUserNotificationDefaultButtonTitleKey:@"Decline",
+      (__bridge NSString*)kCFUserNotificationAlternateButtonTitleKey:@"Accept",
+    }];
+    CFUserNotificationRef notif = CFUserNotificationCreate(kCFAllocatorDefault, 0, 0, NULL, (__bridge CFMutableDictionaryRef) alert);
+
+    CFOptionFlags cfRes;
+
+    CFUserNotificationReceiveResponse(notif, 30, &cfRes);
+
     kdeconnect_free_device(device_by_id);
     kdeconnect_free_string(device_id);
-    NSLog(@"blindly accepting pair");
-    return true;
+    return cfRes == 1;
   }
   kdeconnect_free_string(device_id);
   return false;
@@ -151,8 +158,6 @@ void battery_callback(char *device_id) {
 }
 
 void clipboard_callback(char *device_id, char *clipboard) {
-  NSLog(@"clipboard data recieved from device_id: `%s` data: `%s`", device_id, clipboard);
-
   UIPasteboard.generalPasteboard.string = [NSString stringWithUTF8String:clipboard];
 
   [appMessageCenter sendMessageName:@"refresh" userInfo:nil];

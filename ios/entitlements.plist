@@ -12,7 +12,7 @@
     <key>com.apple.private.security.no-sandbox</key>
     <true/>
     <key>com.apple.private.security.storage.AppDataContainers</key>
-    <true/>
+    <false/>
 
     <key>com.apple.Pasteboard.background-access</key>
     <true/>
@@ -72,6 +72,9 @@
 	<key>com.apple.private.powersource-write-all</key>
 	<true/>
 	<key>com.apple.private.applesmartbattery-smcdatastream</key>
+	<true/>
+
+	<key>com.apple.springboard.CFUserNotification</key>
 	<true/>
 </dict>
 </plist>
