@@ -70,7 +70,6 @@ CPDistributedMessagingCenter *daemonMessageCenter;
 		[messagingCenter runServerOnCurrentThread];
 
     [messagingCenter registerForMessageName:@"lost" target:self selector:@selector(lost:)];
-    [messagingCenter registerForMessageName:@"ping" target:self selector:@selector(ping:withInfo:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
@@ -86,17 +85,6 @@ CPDistributedMessagingCenter *daemonMessageCenter;
     [daemonMessageCenter sendMessageName:@"no_longer_lost" userInfo:nil];
   }];
   [KConnectAlert activateAlertItem: item];
-}
-
-- (void)ping:(NSString*)ping withInfo:(NSDictionary*)info {
-  NSString *name = (NSString*)[info objectForKey:@"name"];
-  if (name) {
-    SBAlertItem *item = [[KConnectAlert alloc] initWithTitle:@"KDE Connect"
-                                                         message:[@"Recieved ping from device: " stringByAppendingString:name]
-                                                     actionTitle:@"OK"
-                                                           block: ^() {}];
-    [KConnectAlert activateAlertItem: item];
-  }
 }
 @end
 
