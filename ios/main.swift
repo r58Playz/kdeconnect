@@ -1,19 +1,22 @@
 import Foundation
+import libroot
 
 var trollstore = false
 
-if CommandLine.argc < 3 || CommandLine.argc > 4 {
-    print("usage: \(CommandLine.arguments[0]) <device_name> <device_type> [--trollstore]")
+if CommandLine.argc > 2 {
+    print("usage: \(CommandLine.arguments[0]) [--trollstore]")
     exit(1)
 }
 
-if (CommandLine.argc == 4 && CommandLine.arguments[3] == "--trollstore") {
+if (CommandLine.argc == 2 && CommandLine.arguments[1] == "--trollstore") {
     trollstore = true
 }
 
 var devicetype = K_CONNECT_FFI_DEVICE_TYPE_PHONE
 
-switch CommandLine.arguments[2] {
+var devicetypestr = try String(contentsOfFile: jbRootPath("/var/mobile/kdeconnect/type"))
+
+switch devicetypestr {
     case "phone":
         devicetype = K_CONNECT_FFI_DEVICE_TYPE_PHONE
         break
@@ -30,9 +33,11 @@ switch CommandLine.arguments[2] {
         devicetype = K_CONNECT_FFI_DEVICE_TYPE_LAPTOP
         break
     default:
-        print("invalid device type: \(CommandLine.arguments[2])")
+        print("invalid device type: \(devicetypestr)")
         exit(1)
 }
 
+var name = try String(contentsOfFile: jbRootPath("/var/mobile/kdeconnect/name"))
+
 // FIXME: We need to move more stuff over to Swift!
-objc_main(CommandLine.arguments[1], KConnectFfiDeviceType_t(devicetype.rawValue), trollstore)
+objc_main(name, KConnectFfiDeviceType_t(devicetype.rawValue), trollstore)

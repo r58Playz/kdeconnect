@@ -358,7 +358,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       NSString *ssid = getWifiNetworkSsid();
       if (TRUSTED_NETWORKS.count && (!ssid || ![TRUSTED_NETWORKS containsObject:ssid])) {
         NSLog(@"no longer on trusted network!!");
-        abort();
+        exit(0);
       }
     });
 
