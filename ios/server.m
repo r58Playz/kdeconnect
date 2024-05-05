@@ -24,11 +24,13 @@
 		CPDistributedMessagingCenter * messagingCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.daemon"];
 		[messagingCenter runServerOnCurrentThread];
 
-		[messagingCenter registerForMessageName:@"no_longer_lost" target:self selector:@selector(noLongerLost:)];
 		[messagingCenter registerForMessageName:@"paired_device_list" target:self selector:@selector(getPairedDeviceList:)];
 		[messagingCenter registerForMessageName:@"connected_device_list" target:self selector:@selector(getConnectedDeviceList:)];
     [messagingCenter registerForMessageName:@"connected_device_info" target:self selector:@selector(getConnectedDeviceInfo:userInfo:)];
 		[messagingCenter registerForMessageName:@"rebroadcast" target:self selector:@selector(rebroadcast:)];
+		[messagingCenter registerForMessageName:@"send_ping" target:self selector:@selector(sendPing:userInfo:)];
+		[messagingCenter registerForMessageName:@"pair" target:self selector:@selector(pair:userInfo:)];
+		[messagingCenter registerForMessageName:@"send_find" target:self selector:@selector(sendFind:userInfo:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
@@ -59,9 +61,11 @@
                           @"id": [NSString stringWithUTF8String:device->id],
                         @"name": [NSString stringWithUTF8String:device->name],
                         @"type": [NSNumber numberWithInt:device->dev_type],
+                      @"paired": [NSNumber numberWithBool:kdeconnect_device_is_paired(device)],
                @"battery_level": [NSNumber numberWithInt:kdeconnect_device_get_battery_level(device)],
             @"battery_charging": [NSNumber numberWithBool:kdeconnect_device_get_battery_charging(device)],
      @"battery_under_threshold": [NSNumber numberWithBool:kdeconnect_device_get_battery_under_threshold(device)],
+                   @"clipboard": [NSString stringWithUTF8String:kdeconnect_device_get_clipboard_content(device)],
     }];
   }
   kdeconnect_free_connected_device_list(devicesVec);
@@ -76,9 +80,11 @@
                           @"id": [NSString stringWithUTF8String:device->id],
                         @"name": [NSString stringWithUTF8String:device->name],
                         @"type": [NSNumber numberWithInt:device->dev_type],
+                      @"paired": [NSNumber numberWithBool:kdeconnect_device_is_paired(device)],
                @"battery_level": [NSNumber numberWithInt:kdeconnect_device_get_battery_level(device)],
             @"battery_charging": [NSNumber numberWithBool:kdeconnect_device_get_battery_charging(device)],
      @"battery_under_threshold": [NSNumber numberWithBool:kdeconnect_device_get_battery_under_threshold(device)],
+                   @"clipboard": [NSString stringWithUTF8String:kdeconnect_device_get_clipboard_content(device)],
     }; 
     kdeconnect_free_device(device);
     return deviceInfo;
@@ -86,11 +92,33 @@
   return @{};
 }
 
-- (void)noLongerLost:(NSString *)name {
-  kdeconnect_set_is_lost(false);
-}
-
 - (void)rebroadcast:(NSString *)name {
   kdeconnect_broadcast_identity();
+}
+
+- (void)sendPing:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_send_ping(device);
+    kdeconnect_free_device(device);
+  }
+}
+- (void) pair:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  NSNumber *pairStatus = (NSNumber*)[userInfo objectForKey:@"pair"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_pair(device, [pairStatus boolValue]);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)sendFind:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_send_find(device);
+    kdeconnect_free_device(device);
+  }
 }
 @end

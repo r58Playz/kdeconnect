@@ -64,11 +64,23 @@ NSArray *getPairedDevices() {
 }
 
 NSDictionary *getDeviceInfo(NSString *id) {
-  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:@{@"id":id}];
+  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_info" userInfo:@{@"id":id}];
 }
 
 void rebroadcast() {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"rebroadcast" userInfo:nil];
+}
+
+void *sendPing(NSString *id) {
+  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_ping" userInfo:@{@"id":id}];
+}
+
+void *sendPairReq(NSString *id, NSNumber *pair) {
+  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"pair" userInfo:@{@"id":id,@"pair":pair}];
+}
+
+void *sendFind(NSString *id) {
+  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_find" userInfo:@{@"id":id}];
 }
 
 @interface KConnectObjcServer : NSObject

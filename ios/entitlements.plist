@@ -46,6 +46,7 @@
     <key>com.apple.security.exception.mach-lookup.global-name</key>
     <array>
         <string>com.apple.commcenter.coretelephony.xpc</string>
+        <string>dev.r58playz.kdeconnectjb.app</string>
     </array>
     <key>com.apple.security.exception.mach-register.global-name</key>
     <array>

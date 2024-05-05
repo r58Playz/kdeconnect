@@ -10,6 +10,9 @@ void createMessageCenter();
 NSArray *getConnectedDevices();
 NSArray *getPairedDevices();
 void rebroadcast();
+void *sendPing(NSString *id);
+void *sendPairReq(NSString *id, NSNumber *pair);
+void *sendFind(NSString *id);
 
 NSArray *sysctl_ps(void);
 

@@ -589,9 +589,19 @@ pub extern "C" fn kdeconnect_device_is_paired(device: &KConnectFfiDevice) -> boo
 }
 
 #[ffi_export]
-pub extern "C" fn kdeconnect_device_pair(device: &KConnectFfiDevice) -> bool {
+pub extern "C" fn kdeconnect_device_pair(device: &KConnectFfiDevice, state: bool) -> bool {
     if let Ok(rt) = build_runtime!() {
-        rt.block_on(async { device.state.client.pair().await })
+        rt.block_on(async { device.state.client.change_pair_state(state).await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_send_find(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.toggle_find_phone().await })
             .is_ok()
     } else {
         false

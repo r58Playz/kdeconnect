@@ -108,6 +108,7 @@ pub(crate) enum DeviceAction {
     SendPacket(String, oneshot::Sender<Result<()>>),
     GetConfig(oneshot::Sender<DeviceConfig>),
     GetPaired(oneshot::Sender<bool>),
+    Unpair,
 }
 
 enum DeviceEvent {
@@ -330,6 +331,13 @@ impl Device {
                         A::GetPaired(response) => {
                             let _ = response.send(self.is_paired());
                         }
+                        A::Unpair => {
+                            self.config.certificate.take();
+                            handler.handle_pair_status_change(false).await;
+                            self.config_provider
+                                .store_device_config(&self.config)
+                                .await?;
+                        }
                     }
                 }
             }
@@ -395,21 +403,28 @@ impl DeviceClient {
         Ok(rx.await?)
     }
 
-    pub async fn pair(&self) -> Result<()> {
-        if self.is_paired().await? {
+    pub async fn change_pair_state(&self, new_state: bool) -> Result<()> {
+        // trying to pair and already paired?
+        if new_state && self.is_paired().await? {
             return Err(KdeConnectError::DeviceAlreadyPaired);
         }
-        let pair = Pair { pair: true };
+        let pair = Pair { pair: new_state };
         self.send_packet(make_packet_str!(pair)?).await?;
-        self.initiated_pair.store(true, Ordering::Release);
-        self.pair_event.listen().await;
-        self.is_paired().await.and_then(|x| {
-            if x {
-                Ok(())
-            } else {
-                Err(KdeConnectError::DeviceRejectedPair)
-            }
-        })
+        // trying to pair? if so wait for pair response
+        if new_state {
+            self.initiated_pair.store(true, Ordering::Release);
+            self.pair_event.listen().await;
+            self.is_paired().await.and_then(|x| {
+                if x {
+                    Ok(())
+                } else {
+                    Err(KdeConnectError::DeviceRejectedPair)
+                }
+            })
+        } else {
+            self.client_w.send(DeviceAction::Unpair)?;
+            Ok(())
+        }
     }
 
     pub async fn toggle_find_phone(&self) -> Result<()> {

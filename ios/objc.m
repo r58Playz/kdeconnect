@@ -55,6 +55,19 @@ NSString *getWifiNetworkSsid() {
   return (__bridge_transfer NSString *)WiFiNetworkGetSSID(network);
 }
 
+void trySendMessageToApp(NSString *msg, NSDictionary *info) {
+  if (![appMessageCenter sendMessageName:msg userInfo:info]) {
+    NSLog(@"failed to send!! reconnecting!!");
+    // reconnect
+    appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
+    [appMessageCenter sendMessageName:msg userInfo:info];
+  }
+}
+
+void trySendRefreshToApp() {
+  trySendMessageToApp(@"refresh", nil);
+}
+
 bool getBatteryInfo(BatteryInfo *info) {
   CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
   if (!powerInfo) return false;
@@ -96,7 +109,7 @@ void initialized_callback() {
     kdeconnect_on_clipboard_event((char*)clipboard.UTF8String);
   }
 
-  [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
+  trySendRefreshToApp();
 }
 
 void discovered_callback(char* device_id) {
@@ -104,7 +117,7 @@ void discovered_callback(char* device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"retrieved discovered device: %s", device_by_id->name);
-    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
+    trySendRefreshToApp();
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -141,7 +154,7 @@ void pair_status_changed_callback(char* device_id, bool pair_status) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"device `%s` pair status changed to: %s", device_by_id->name, pair_status ? "paired" : "not paired");
-    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
+    trySendRefreshToApp();
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -151,7 +164,7 @@ void battery_callback(char *device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"device sent battery data: %s", device_by_id->name);
-    [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
+    trySendRefreshToApp();
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
@@ -160,7 +173,7 @@ void battery_callback(char *device_id) {
 void clipboard_callback(char *device_id, char *clipboard) {
   UIPasteboard.generalPasteboard.string = [NSString stringWithUTF8String:clipboard];
 
-  [appMessageCenter sendMessageName:@"refresh" userInfo:nil];
+  trySendRefreshToApp();
   kdeconnect_free_string(device_id);
 }
 
@@ -187,10 +200,23 @@ void ping_callback(char *device_id) {
 
 void find_callback() {
   NSLog(@"i am lost!");
-  if (!TROLLSTORE) {
-    [tweakMessageCenter sendMessageName:@"lost" userInfo:nil];
-    NSLog(@"sent message to tweak telling it i am lost!");
-  }
+
+  NSThread *message_thread = [[NSThread alloc] initWithBlock:^void() {
+    NSMutableDictionary *alert = [[NSMutableDictionary alloc] init];
+    [alert addEntriesFromDictionary:@{
+      (__bridge NSString*)kCFUserNotificationAlertHeaderKey:@"KDE Connect",
+      (__bridge NSString*)kCFUserNotificationAlertMessageKey:@"Find my device alert",
+      (__bridge NSString*)kCFUserNotificationDefaultButtonTitleKey:@"OK",
+    }];
+    CFUserNotificationRef notif = CFUserNotificationCreate(kCFAllocatorDefault, 0, 0, NULL, (__bridge CFMutableDictionaryRef) alert);
+
+    CFOptionFlags cfRes;
+
+    CFUserNotificationReceiveResponse(notif, 0, &cfRes);
+    kdeconnect_set_is_lost(false);
+  }];
+
+  [message_thread start];
 
   [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback
                                          error:nil];

@@ -1,11 +1,26 @@
 import SwiftUI
 
-enum DeviceType: Int{
+enum DeviceType: Int {
     case desktop = 0
     case laptop = 1
     case phone = 2
     case tablet = 3
     case tv = 4
+
+    func toString() -> String {
+        switch self {
+            case .desktop:
+                return "Desktop"
+            case .laptop:
+                return "Laptop"
+            case .phone:
+                return "Phone"
+            case .tablet:
+                return "Tablet"
+            case .tv:
+                return "TV"
+        }
+    }
 
     func toSFSymbol() -> String {
         switch self {
@@ -33,9 +48,11 @@ struct ConnectedDevice: Identifiable, Equatable {
     var name: String
     var id: String
     var type: DeviceType
+    var paired: Bool
     var batteryLevel: Int
     var batteryCharging: Bool
     var batteryLow: Bool
+    var clipboard: String
 }
 
 func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
@@ -79,7 +96,7 @@ struct ContentView: View {
         let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
         if kdeconnectd != nil {
             do {
-                try self.refreshConnectedDevices()
+                try self.refreshConnectedDevices(e:false)
                 try self.refreshPairedDevices()
             } catch {
                 // ignore
@@ -87,7 +104,7 @@ struct ContentView: View {
         }
     }
 
-    func refreshConnectedDevices() throws {
+    func refreshConnectedDevices(e:Bool) throws {
         guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
             throw "Error getting connected devices"
         }
@@ -95,17 +112,21 @@ struct ContentView: View {
             if let name = $0.value(forKey: "name") as? String,
                 let id = $0.value(forKey: "id") as? String,
                 let type = $0.value(forKey: "type") as? Int,
+                let paired = $0.value(forKey: "paired") as? Int,
                 let batteryLevel = $0.value(forKey: "battery_level") as? Int,
                 let batteryCharging = $0.value(forKey: "battery_charging") as? Int,
                 let batteryUnderThreshold = $0.value(forKey: "battery_under_threshold") as? Int,
+                let clipboard = $0.value(forKey: "clipboard") as? String,
                 let parsedType = DeviceType(rawValue: type) {
                     let device = ConnectedDevice(
                         name: name,
                         id: id,
                         type: parsedType,
+                        paired: paired == 1,
                         batteryLevel: batteryLevel,
                         batteryCharging: batteryCharging == 1,
-                        batteryLow: batteryUnderThreshold == 1
+                        batteryLow: batteryUnderThreshold == 1,
+                        clipboard: clipboard
                     )
                     return device
             } else {
@@ -146,7 +167,7 @@ struct ContentView: View {
         if kdeconnectd != nil {
             do {
                 rebroadcast()
-                try self.refreshConnectedDevices()
+                try self.refreshConnectedDevices(e:true)
                 try self.refreshPairedDevices()
             } catch {
                 UIApplication.shared.alert(body: error.localizedDescription)
@@ -160,19 +181,25 @@ struct ContentView: View {
                 List {
                     Section(header: Text("Connected devices")) {
                         ForEach(self.$data.connected, id: \.id) { $device in
-                            HStack {
-                                Image(systemName: device.type.toSFSymbol())
-                                if device.batteryCharging {
-                                    Image(systemName: "battery.100.bolt").foregroundStyle(.green)
-                                } else if device.batteryLow {
-                                    Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
-                                } else {
-                                    Image(systemName: batteryToSFSymbol(device: $device))
-                                }
-                                Text(device.batteryLevel, format: .percent)
-                                VStack(alignment: .leading) {
-                                    Text(device.name).lineLimit(1).truncationMode(.tail)
-                                    Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
+                            NavigationLink {
+                                ConnectedDeviceView(device: $device, refresh: { refreshDevicesViews() })
+                            } label: {
+                                HStack {
+                                    Image(systemName: device.type.toSFSymbol())
+                                    if device.paired {
+                                        if device.batteryCharging {
+                                            Image(systemName: "battery.100.bolt").foregroundStyle(.green)
+                                        } else if device.batteryLow {
+                                            Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
+                                        } else {
+                                            Image(systemName: batteryToSFSymbol(device: $device))
+                                        }
+                                        Text(device.batteryLevel, format: .percent)
+                                    }
+                                    VStack(alignment: .leading) {
+                                        Text(device.name).lineLimit(1).truncationMode(.tail)
+                                        Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
+                                    }
                                 }
                             }
                         }
@@ -216,4 +243,92 @@ struct ContentView: View {
             .navigationTitle("KDE Connect")
         }
 	}
+}
+
+struct ConnectedDeviceView: View {
+    var device: Binding<ConnectedDevice>
+    var refresh: () -> Void
+    var body: some View {
+        VStack {
+            List {
+                Section(header: Text("Actions")) {
+                    Button(device.paired.wrappedValue ? "Unpair" : "Pair") {
+                        sendPairReq(device.id.wrappedValue, device.paired.wrappedValue ? 0 : 1)
+                    }
+                    Button("Send ping") {
+                        sendPing(device.id.wrappedValue)
+                    }
+                    Button("Find") {
+                        sendFind(device.id.wrappedValue)
+                    }
+                }
+                Section(header: Text("Information")) {
+                    HStack {
+                        Text("Name")
+                        Spacer()
+                        Text(device.name.wrappedValue)
+                    }
+                    HStack {
+                        Text("ID")
+                        Spacer()
+                        Text(device.id)
+                    }
+                    HStack {
+                        Text("Type")
+                        Spacer()
+                        Text(device.type.wrappedValue.toString())
+                    }
+                    HStack {
+                        Text("Paired")
+                        Spacer()
+                        Text(device.paired.wrappedValue ? "Yes" : "No")
+                    }
+                }
+                Section(header: Text("State")) {
+                    HStack {
+                        Text("Battery level")
+                        Spacer()
+                        Text("\(device.batteryLevel.wrappedValue)")
+                    }
+                    HStack {
+                        Text("Battery charging")
+                        Spacer()
+                        Text(device.batteryCharging.wrappedValue ? "Yes" : "No")
+                    }
+                    HStack {
+                        Text("Battery low")
+                        Spacer()
+                        Text(device.batteryLow.wrappedValue ? "Yes" : "No")
+                    }
+                    NavigationLink("Clipboard") {
+                        ClipboardView(device: device, refresh: { refresh() })
+                    }
+                }
+            }
+            .listStyle(InsetGroupedListStyle())
+            .refreshable {
+                refresh()
+            }
+        }
+        .navigationTitle(device.name.wrappedValue)
+    }
+}
+
+struct ClipboardView: View {
+    var device: Binding<ConnectedDevice>
+    var refresh: () -> Void
+    var body: some View {
+        VStack {
+            List {
+                Button("Copy") {
+                    UIPasteboard.general.string = device.clipboard.wrappedValue
+                }
+                Text(device.clipboard.wrappedValue).multilineTextAlignment(.leading).font(.system(.body, design: .monospaced)).padding(.bottom, 4)
+            }
+        }
+        .navigationTitle("Clipboard")
+        .refreshable {
+            refresh()
+        }
+    }
 }
