@@ -378,8 +378,8 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       NSString *radioTechnology = [telephonyClient copyRadioAccessTechnology:context error:NULL];
       kdeconnect_clear_connectivity_signals();
       if (info && radioTechnology) {
-        kdeconnect_add_connectivity_signal("1", radioTechnology.UTF8String, info.bars.intValue + 1);
-        NSLog(@"added connectivity signal: 1 %@ %d", radioTechnology, info.bars.intValue + 1);
+        kdeconnect_add_connectivity_signal("1", radioTechnology.UTF8String, info.bars.intValue);
+        NSLog(@"added connectivity signal: 1 %@ %d", radioTechnology, info.bars.intValue);
       }
     });
 
