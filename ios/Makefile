@@ -23,9 +23,7 @@ endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
 SUBPROJECTS += app
-ifneq ($(PACKAGE_FORMAT),ipa)
-SUBPROJECTS += tweak
-endif
+
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
 internal-package::

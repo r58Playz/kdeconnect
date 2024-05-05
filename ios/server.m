@@ -31,6 +31,7 @@
 		[messagingCenter registerForMessageName:@"send_ping" target:self selector:@selector(sendPing:userInfo:)];
 		[messagingCenter registerForMessageName:@"pair" target:self selector:@selector(pair:userInfo:)];
 		[messagingCenter registerForMessageName:@"send_find" target:self selector:@selector(sendFind:userInfo:)];
+		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
 
@@ -120,5 +121,8 @@
     kdeconnect_device_send_find(device);
     kdeconnect_free_device(device);
   }
+}
+- (void)kill:(NSString *)name {
+  exit(0);
 }
 @end

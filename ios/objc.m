@@ -108,6 +108,7 @@ void initialized_callback() {
   if ((clipboard = UIPasteboard.generalPasteboard.string)) {
     kdeconnect_on_clipboard_event((char*)clipboard.UTF8String);
   }
+  CURRENT_CLIPBOARD = clipboard;
 
   trySendRefreshToApp();
 }
@@ -171,7 +172,9 @@ void battery_callback(char *device_id) {
 }
 
 void clipboard_callback(char *device_id, char *clipboard) {
-  UIPasteboard.generalPasteboard.string = [NSString stringWithUTF8String:clipboard];
+  NSString *clipboardNS = [NSString stringWithUTF8String:clipboard];
+  UIPasteboard.generalPasteboard.string = clipboardNS;
+  CURRENT_CLIPBOARD = clipboardNS;
 
   trySendRefreshToApp();
   kdeconnect_free_string(device_id);
@@ -246,7 +249,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       [[NSFileManager defaultManager] createFileAtPath:trustedPath contents:[NSData data] attributes:nil];
     }
     TRUSTED_NETWORKS = [[[NSString stringWithContentsOfFile:trustedPath encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
-    [TRUSTED_NETWORKS removeLastObject];
+    [TRUSTED_NETWORKS removeObject:@""];
     NSLog(@"trustedNetworks: %@", TRUSTED_NETWORKS);
 
     wifiManager = WiFiManagerClientCreate(kCFAllocatorDefault, 0);

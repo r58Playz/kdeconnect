@@ -1,11 +1,30 @@
 import SwiftUI
 
-enum DeviceType: Int {
+enum DeviceType: Int, CaseIterable, Identifiable {
     case desktop = 0
     case laptop = 1
     case phone = 2
     case tablet = 3
     case tv = 4
+
+    var id: Self { self }
+
+    static func fromString(_ str: String) throws -> Self {
+        switch str {
+            case "desktop":
+                return .desktop
+            case "laptop":
+                return .laptop
+            case "phone":
+                return .phone
+            case "tablet":
+                return .tablet
+            case "tv":
+                return .tv
+            default:
+                throw "invalid"
+        }
+    }
 
     func toString() -> String {
         switch self {
@@ -216,22 +235,35 @@ struct ContentView: View {
                         }
                     }
                     Section(header: Text("Settings")) {
-                        Button("Start daemon (TrollStore only)") { // TODO: Detect if installed via TrollStore
-                            let proc = sysctl_ps() as! [NSDictionary]
-                            let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
-                            if kdeconnectd == nil {
-                                let bundlePath = Bundle.main.bundlePath
-                                let daemonPath = "\(bundlePath)/kdeconnectd"
-                                if !FileManager.default.fileExists(atPath: daemonPath) {
-                                    UIApplication.shared.alert(body: "Daemon not found")
-                                    return
-                                }
-                                let ret = spawnRoot(daemonPath, [])
-                                if ret != 0 {
-                                    UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
-                                    return
+                        if let resourceURL = Bundle.main.resourceURL,
+                            FileManager().fileExists(atPath:  resourceURL.deletingLastPathComponent().appendingPathComponent("_TrollStore").path) {
+                            Button("Start daemon") {
+                                let proc = sysctl_ps() as! [NSDictionary]
+                                let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
+                                if kdeconnectd == nil {
+                                    let bundlePath = Bundle.main.bundlePath
+                                    let daemonPath = "\(bundlePath)/kdeconnectd"
+                                    if !FileManager.default.fileExists(atPath: daemonPath) {
+                                        UIApplication.shared.alert(body: "Daemon not found")
+                                        return
+                                    }
+                                    let ret = spawnRoot(daemonPath, [])
+                                    if ret != 0 {
+                                        UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
+                                        return
+                                    }
                                 }
                             }
+                            Button("Kill daemon") {
+                                sendExit()
+                            }
+                        } else {
+                            Button("Restart daemon") {
+                                sendExit()
+                            }
+                        }
+                        NavigationLink("Daemon") {
+                            DaemonSettingsView()
                         }
                     }
                 }

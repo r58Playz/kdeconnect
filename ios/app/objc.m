@@ -71,16 +71,20 @@ void rebroadcast() {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"rebroadcast" userInfo:nil];
 }
 
-void *sendPing(NSString *id) {
-  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_ping" userInfo:@{@"id":id}];
+void sendPing(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_ping" userInfo:@{@"id":id}];
 }
 
-void *sendPairReq(NSString *id, NSNumber *pair) {
-  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"pair" userInfo:@{@"id":id,@"pair":pair}];
+void sendPairReq(NSString *id, NSNumber *pair) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"pair" userInfo:@{@"id":id,@"pair":pair}];
 }
 
-void *sendFind(NSString *id) {
-  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_find" userInfo:@{@"id":id}];
+void sendFind(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_find" userInfo:@{@"id":id}];
+}
+
+void sendExit() {
+  [daemonMessageCenter sendMessageName:@"killyourself" userInfo:nil];
 }
 
 @interface KConnectObjcServer : NSObject
