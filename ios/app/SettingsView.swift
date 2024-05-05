@@ -8,7 +8,7 @@ extension String: Identifiable {
     }
 }
 
-class DaemonSettingsViewModel: ObservableObject {
+class SettingsViewModel: ObservableObject {
     @Published var name: String = ""
     @Published var type: DeviceType = .desktop
     @Published var trustedNetworks: String = ""
@@ -31,8 +31,8 @@ class DaemonSettingsViewModel: ObservableObject {
     }
 }
 
-struct DaemonSettingsView: View {
-    @ObservedObject var state: DaemonSettingsViewModel = DaemonSettingsViewModel() 
+struct SettingsView: View {
+    @ObservedObject var state: SettingsViewModel = SettingsViewModel() 
     var body: some View {
         List {
             HStack {
@@ -54,7 +54,7 @@ struct DaemonSettingsView: View {
                 }.navigationTitle("Trusted Networks")
             }
         }
-        .navigationTitle("Daemon Settings")
+        .navigationTitle("Settings")
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button("Load") {

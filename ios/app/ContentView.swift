@@ -234,7 +234,10 @@ struct ContentView: View {
                             }
                         }
                     }
-                    Section(header: Text("Settings")) {
+                    Section(header: Text("Tools")) {
+                        NavigationLink("Settings") {
+                            SettingsView()
+                        }
                         if let resourceURL = Bundle.main.resourceURL,
                             FileManager().fileExists(atPath:  resourceURL.deletingLastPathComponent().appendingPathComponent("_TrollStore").path) {
                             Button("Start daemon") {
@@ -261,9 +264,6 @@ struct ContentView: View {
                             Button("Restart daemon") {
                                 sendExit()
                             }
-                        }
-                        NavigationLink("Daemon") {
-                            DaemonSettingsView()
                         }
                     }
                 }
