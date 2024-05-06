@@ -187,6 +187,14 @@ derive_type!(
     "kdeconnect.connectivity_report.request"
 );
 
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub struct Presenter {
+    pub dx: Option<f32>,
+    pub dy: Option<f32>,
+    pub stop: Option<bool>
+}
+derive_type!(Presenter, "kdeconnect.presenter");
+
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway
 #[macro_export]

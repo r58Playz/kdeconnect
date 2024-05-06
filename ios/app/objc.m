@@ -83,6 +83,14 @@ void sendFind(NSString *id) {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_find" userInfo:@{@"id":id}];
 }
 
+void sendPresenter(NSString *id, NSNumber *dx, NSNumber *dy) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_presenter" userInfo:@{@"id":id,@"dx":dx,@"dy":dy}];
+}
+
+void stopPresenter(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"stop_presenter" userInfo:@{@"id":id}];
+}
+
 void sendExit() {
   [daemonMessageCenter sendMessageName:@"killyourself" userInfo:nil];
 }

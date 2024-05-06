@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
-    packets::{Battery, ConnectivityReport, DeviceType, Ping},
+    packets::{Battery, ConnectivityReport, DeviceType, Ping, Presenter},
 };
 use log::info;
 use safer_ffi::prelude::*;
@@ -89,6 +89,11 @@ impl DeviceHandler for KConnectHandler {
     async fn handle_connectivity_report(&mut self, packet: ConnectivityReport) {
         self.state.lock().await.connectivity.replace(packet);
         // TODO: Add callback for connectivity report
+    }
+
+    async fn handle_presenter(&mut self, _packet: Presenter) {
+        // Ignore
+        // TODO: maybe add support for moving the mouse? not much use on iOS though
     }
 
     async fn handle_pairing_request(&mut self) -> bool {

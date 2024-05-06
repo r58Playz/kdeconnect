@@ -1,4 +1,8 @@
 import SwiftUI
+import CoreMotion
+
+var motionManager: CMMotionManager = CMMotionManager()
+
 
 enum DeviceType: Int, CaseIterable, Identifiable {
     case desktop = 0
@@ -266,6 +270,39 @@ struct ContentView: View {
                             }
                         }
                     }
+                    Section(header: Text("Info")) {
+                        VStack(alignment: .leading) {
+                            Text("kdeconnectjb").font(.system(.title, design: .monospaced)).frame(maxWidth: .infinity, alignment: .center).padding(.bottom, 8)
+                            Text(
+                                """
+                                KDE Connect implementation in Rust and application for jailbroken/TrollStore iOS.
+
+                                This application is built in SwiftUI with Objective-C glue for communicating with the daemon.
+                                The daemon is built in Rust and Objective-C, with a little Swift.
+                                """)
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+                    Section(header: Text("Credits")) {
+                        VStack(alignment: .leading) {
+                            Link("r58Playz", destination: URL(string: "https://github.com/r58Playz")!)
+                                .font(.system(.title2, design: .monospaced))
+                                .padding(.bottom, 4)
+                            Text("Made KDE Connect implementation in Rust, daemon, and parts of the UI.")
+                        }
+                        VStack(alignment: .leading) {
+                            Link("BomberFish", destination: URL(string: "https://github.com/BomberFish")!)
+                                .font(.system(.title2, design: .monospaced))
+                                .padding(.bottom, 4)
+                            Text("Helped with various features and the UI, especially dealing with SwiftUI.")
+                        }
+                        VStack(alignment: .leading) {
+                            Link("KDE Connect Team", destination: URL(string: "https://invent.kde.org/network/kdeconnect-meta/-/blob/master/README.md")!)
+                                .font(.system(.title2, design: .monospaced))
+                                .padding(.bottom, 4)
+                            Text("Without their effort, the KDE Connect protocol and apps would not exist.")
+                        }
+                    }
                 }
                 .listStyle(InsetGroupedListStyle())
                 .refreshable {
@@ -274,68 +311,85 @@ struct ContentView: View {
             }
             .navigationTitle("KDE Connect")
         }
+        .navigationViewStyle(.stack)
 	}
 }
 
 struct ConnectedDeviceView: View {
     var device: Binding<ConnectedDevice>
     var refresh: () -> Void
+
+    @ViewBuilder var actions: some View {
+        Section(header: Text("Actions")) {
+            Button(device.paired.wrappedValue ? "Unpair" : "Pair") {
+                sendPairReq(device.id.wrappedValue, device.paired.wrappedValue ? 0 : 1)
+            }
+            Button("Send ping") {
+                sendPing(device.id.wrappedValue)
+            }
+            Button("Find") {
+                sendFind(device.id.wrappedValue)
+            }
+            NavigationLink("Presenter") {
+                PresenterView(device: device)
+            }
+        }
+    }
+
+    @ViewBuilder var info: some View {
+        Section(header: Text("Information")) {
+            HStack {
+                Text("Name")
+                Spacer()
+                Text(device.name.wrappedValue)
+            }
+            HStack {
+                Text("ID")
+                Spacer()
+                Text(device.id)
+            }
+            HStack {
+                Text("Type")
+                Spacer()
+                Text(device.type.wrappedValue.toString())
+            }
+            HStack {
+                Text("Paired")
+                Spacer()
+                Text(device.paired.wrappedValue ? "Yes" : "No")
+            }
+        }
+    }
+
+    @ViewBuilder var state: some View {
+        Section(header: Text("State")) {
+            HStack {
+                Text("Battery level")
+                Spacer()
+                Text("\(device.batteryLevel.wrappedValue)")
+            }
+            HStack {
+                Text("Battery charging")
+                Spacer()
+                Text(device.batteryCharging.wrappedValue ? "Yes" : "No")
+            }
+            HStack {
+                Text("Battery low")
+                Spacer()
+                Text(device.batteryLow.wrappedValue ? "Yes" : "No")
+            }
+            NavigationLink("Clipboard") {
+                ClipboardView(device: device, refresh: { refresh() })
+            }
+        }
+    }
+
     var body: some View {
         VStack {
             List {
-                Section(header: Text("Actions")) {
-                    Button(device.paired.wrappedValue ? "Unpair" : "Pair") {
-                        sendPairReq(device.id.wrappedValue, device.paired.wrappedValue ? 0 : 1)
-                    }
-                    Button("Send ping") {
-                        sendPing(device.id.wrappedValue)
-                    }
-                    Button("Find") {
-                        sendFind(device.id.wrappedValue)
-                    }
-                }
-                Section(header: Text("Information")) {
-                    HStack {
-                        Text("Name")
-                        Spacer()
-                        Text(device.name.wrappedValue)
-                    }
-                    HStack {
-                        Text("ID")
-                        Spacer()
-                        Text(device.id)
-                    }
-                    HStack {
-                        Text("Type")
-                        Spacer()
-                        Text(device.type.wrappedValue.toString())
-                    }
-                    HStack {
-                        Text("Paired")
-                        Spacer()
-                        Text(device.paired.wrappedValue ? "Yes" : "No")
-                    }
-                }
-                Section(header: Text("State")) {
-                    HStack {
-                        Text("Battery level")
-                        Spacer()
-                        Text("\(device.batteryLevel.wrappedValue)")
-                    }
-                    HStack {
-                        Text("Battery charging")
-                        Spacer()
-                        Text(device.batteryCharging.wrappedValue ? "Yes" : "No")
-                    }
-                    HStack {
-                        Text("Battery low")
-                        Spacer()
-                        Text(device.batteryLow.wrappedValue ? "Yes" : "No")
-                    }
-                    NavigationLink("Clipboard") {
-                        ClipboardView(device: device, refresh: { refresh() })
-                    }
-                }
+                actions
+                info
+                state
             }
             .listStyle(InsetGroupedListStyle())
             .refreshable {
@@ -355,7 +409,10 @@ struct ClipboardView: View {
                 Button("Copy") {
                     UIPasteboard.general.string = device.clipboard.wrappedValue
                 }
-                Text(device.clipboard.wrappedValue).multilineTextAlignment(.leading).font(.system(.body, design: .monospaced)).padding(.bottom, 4)
+                Text(device.clipboard.wrappedValue)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(.body, design: .monospaced))
             }
         }
         .navigationTitle("Clipboard")

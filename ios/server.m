@@ -31,6 +31,8 @@
 		[messagingCenter registerForMessageName:@"send_ping" target:self selector:@selector(sendPing:userInfo:)];
 		[messagingCenter registerForMessageName:@"pair" target:self selector:@selector(pair:userInfo:)];
 		[messagingCenter registerForMessageName:@"send_find" target:self selector:@selector(sendFind:userInfo:)];
+		[messagingCenter registerForMessageName:@"send_presenter" target:self selector:@selector(sendPresenter:userInfo:)];
+		[messagingCenter registerForMessageName:@"stop_presenter" target:self selector:@selector(sendPresenterStop:userInfo:)];
 		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
@@ -119,6 +121,24 @@
   KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
   if (device) {
     kdeconnect_device_send_find(device);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)sendPresenter:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  NSNumber *dx = (NSNumber*)[userInfo objectForKey:@"dx"];
+  NSNumber *dy = (NSNumber*)[userInfo objectForKey:@"dy"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_send_presenter(device, [dx floatValue], [dy floatValue]);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)sendPresenterStop:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_stop_presenter(device);
     kdeconnect_free_device(device);
   }
 }

@@ -24,7 +24,7 @@ use crate::{
     make_packet, make_packet_str,
     packets::{
         Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
-        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet, PacketType, Pair, Ping,
+        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet, PacketType, Pair, Ping, Presenter,
     },
     util::get_time_ms,
     KdeConnectError, Result,
@@ -308,6 +308,9 @@ impl Device {
                             let connectivity = handler.get_connectivity_report().await;
                             self.stream_w.send(make_packet_str!(connectivity)?).await?;
                         }
+                        Presenter::TYPE => {
+                            handler.handle_presenter(json::from_value(packet.body)?).await;
+                        }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
                             packet.packet_type, packet.body
@@ -391,6 +394,10 @@ impl DeviceClient {
         self.send_packet(make_packet_str!(packet)?).await
     }
 
+    pub async fn send_presenter_update(&self, packet: Presenter) -> Result<()> {
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
     pub async fn get_config(&self) -> Result<DeviceConfig> {
         let (tx, rx) = oneshot::channel();
         self.client_w.send(DeviceAction::GetConfig(tx))?;
@@ -441,6 +448,7 @@ pub trait DeviceHandler {
     async fn handle_clipboard_content(&mut self, content: String);
     async fn handle_find_phone(&mut self);
     async fn handle_connectivity_report(&mut self, packet: ConnectivityReport);
+    async fn handle_presenter(&mut self, packet: Presenter);
 
     async fn handle_pairing_request(&mut self) -> bool;
 

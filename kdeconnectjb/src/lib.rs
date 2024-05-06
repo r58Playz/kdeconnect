@@ -16,7 +16,7 @@ use device::{
 };
 use kdeconnect::{
     config::FsConfig,
-    packets::{Battery, ConnectivityReportNetworkType, ConnectivityReportSignal},
+    packets::{Battery, ConnectivityReportNetworkType, ConnectivityReportSignal, Presenter},
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
 use log::info;
@@ -603,6 +603,52 @@ pub extern "C" fn kdeconnect_device_send_find(device: &KConnectFfiDevice) -> boo
     if let Ok(rt) = build_runtime!() {
         rt.block_on(async { device.state.client.toggle_find_phone().await })
             .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_send_presenter(
+    device: &KConnectFfiDevice,
+    dx: f32,
+    dy: f32,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .client
+                .send_presenter_update(Presenter {
+                    dx: Some(dx),
+                    dy: Some(dy),
+                    stop: None,
+                })
+                .await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_stop_presenter(
+    device: &KConnectFfiDevice,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .client
+                .send_presenter_update(Presenter {
+                    dx: None,
+                    dy: None,
+                    stop: Some(true),
+                })
+                .await
+        })
+        .is_ok()
     } else {
         false
     }
