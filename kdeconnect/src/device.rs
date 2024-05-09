@@ -1,32 +1,38 @@
 use std::{
+    future::Future,
+    os::unix::fs::MetadataExt,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use event_listener::Event;
-use log::{debug, error};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
+use sha2::{Digest, Sha256};
 use tokio::{
-    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf},
+    fs::File,
+    io::{split, AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf},
     net::TcpStream,
     select,
     sync::{mpsc, oneshot, Mutex},
     time::timeout,
 };
-use tokio_rustls::TlsStream;
+use tokio_rustls::{rustls::ServerConfig, TlsStream};
 
 use crate::{
     config::ConfigProvider,
-    make_packet, make_packet_str,
+    make_packet, make_packet_payload, make_packet_str, make_packet_str_payload,
     packets::{
         Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
-        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet, PacketType, Pair, Ping, Presenter,
+        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet,
+        PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter, ShareRequest, SystemVolume,
+        SystemVolumeRequest, SystemVolumeStream,
     },
-    util::get_time_ms,
+    util::{create_payload, get_public_key, get_time_ms},
     KdeConnectError, Result,
 };
 
@@ -43,11 +49,12 @@ impl LockedDeviceWrite {
     }
 }
 
-pub async fn create_device(
+pub(crate) async fn create_device(
     identity: Identity,
     config_provider: Arc<dyn ConfigProvider + Sync + Send>,
     stream: TlsStream<BufReader<TcpStream>>,
     connected_clients: Arc<Mutex<Vec<String>>>,
+    server_config: Arc<ServerConfig>,
 ) -> Result<(Device, DeviceClient)> {
     let device_config = config_provider
         .retrieve_device_config(&identity.device_id)
@@ -71,7 +78,7 @@ pub async fn create_device(
             pair_event.clone(),
         )
         .await?,
-        DeviceClient::new(client_tx, initiated_pair, pair_event),
+        DeviceClient::new(client_tx, initiated_pair, pair_event, server_config),
     ))
 }
 
@@ -107,6 +114,7 @@ impl DeviceConfig {
 pub(crate) enum DeviceAction {
     SendPacket(String, oneshot::Sender<Result<()>>),
     GetConfig(oneshot::Sender<DeviceConfig>),
+    GetKey(oneshot::Sender<Result<String>>),
     GetPaired(oneshot::Sender<bool>),
     Unpair,
 }
@@ -176,6 +184,20 @@ impl Device {
         ret
     }
 
+    pub async fn get_verification_key(&self) -> Result<String> {
+        let mut own_key = get_public_key(&self.config_provider.retrieve_server_cert().await?)?;
+        let mut device_key = get_public_key(&self.stream_cert)?;
+        let mut sha256 = Sha256::new();
+        if own_key < device_key {
+            (own_key, device_key) = (device_key, own_key);
+        }
+        sha256.update(own_key);
+        sha256.update(device_key);
+        let digest = sha256.finalize();
+        info!("digest: {:?}", digest);
+        Ok(hex::encode(digest))
+    }
+
     async fn send_paired_data(
         &self,
         handler: &mut Box<dyn DeviceHandler + Sync + Send>,
@@ -186,15 +208,21 @@ impl Device {
 
             let clipboard = ClipboardConnect {
                 content: handler.get_clipboard_content().await,
-                // TODO: Do we want to ask handler for clipboard last updated? timestamp seems to
-                // be last updated according to:
-                // https://invent.kde.org/network/kdeconnect-android/-/blob/master/src/org/kde/kdeconnect/Plugins/ClibpoardPlugin/ClipboardPlugin.java?ref_type=heads#L78
                 timestamp: get_time_ms(),
             };
             self.stream_w.send(make_packet_str!(clipboard)?).await?;
 
             let connectivity = handler.get_connectivity_report().await;
             self.stream_w.send(make_packet_str!(connectivity)?).await?;
+
+            let system_volume = SystemVolume {
+                sink_list: Some(handler.get_system_volume().await),
+                enabled: None,
+                name: None,
+                muted: None,
+                volume: None,
+            };
+            self.stream_w.send(make_packet_str!(system_volume)?).await?;
         }
         Ok(())
     }
@@ -225,18 +253,21 @@ impl Device {
                         }
                         Pair::TYPE => {
                             let body: Pair = json::from_value(packet.body)?;
-                            if self.is_paired() && !body.pair {
-                                // already paired and asking to unpair?
-                                self.config.certificate.take();
-                                let pair_packet = Pair { pair: false };
-                                self.stream_w.send(make_packet_str!(pair_packet)?).await?;
-                                debug!("unpaired from {:?}", self.config.id);
-                                handler.handle_pair_status_change(false).await;
+                            let initiated_pair = self.initiated_pair.load(Ordering::Acquire);
+                            if self.is_paired() && body.pair {
+                                warn!("{} asking to pair when already paired??", self.config.id);
+                            } else if initiated_pair && !self.is_paired() && !body.pair {
+                                // if we initiated pair notify the client
+                                self.initiated_pair.store(false, Ordering::Release);
+                                self.pair_event.notify(usize::MAX);
+                            } else if !self.is_paired() && !body.pair {
+                                warn!(
+                                    "{} asking to unpair when already unpaired??",
+                                    self.config.id
+                                );
                             } else if !self.is_paired() && body.pair {
-                                // unpaired and asking to pair?
-                                // > By convention the request times out after 30 seconds.
-                                // https://valent.andyholmes.ca/documentation/protocol.html#kdeconnectpair
-                                let initiated_pair = self.initiated_pair.load(Ordering::Acquire);
+                                // pairing
+
                                 let should_pair = initiated_pair
                                     || timeout(
                                         Duration::from_secs(30),
@@ -245,39 +276,44 @@ impl Device {
                                     .await
                                     .unwrap_or(false);
 
-                                if should_pair {
-                                    self.config.certificate.replace(self.stream_cert.clone());
-                                }
+                                self.initiated_pair.store(false, Ordering::Release);
 
                                 if !initiated_pair {
+                                    // send response if other side requested pair
                                     let pair_packet = Pair { pair: should_pair };
                                     self.stream_w.send(make_packet_str!(pair_packet)?).await?;
                                 }
 
                                 if should_pair {
+                                    // if we initiated pair and they accepted or they initiated
+                                    // pair and we accepted, finish pairing process
+                                    self.config.certificate.replace(self.stream_cert.clone());
+                                    self.config_provider
+                                        .store_device_config(&self.config)
+                                        .await?;
                                     handler.handle_pair_status_change(true).await;
-                                    self.initiated_pair.store(false, Ordering::Release);
+                                    self.send_paired_data(handler).await?;
                                 }
 
-                                self.send_paired_data(handler).await?;
-
-                                self.pair_event.notify(usize::MAX);
+                                if initiated_pair {
+                                    // if we initiated pair notify the client
+                                    self.pair_event.notify(usize::MAX);
+                                }
 
                                 debug!(
                                     "{} pair request from {:?}",
                                     if should_pair { "accepted" } else { "refused" },
                                     self.config.id
                                 );
-                            } else if !self.is_paired()
-                                && self.initiated_pair.load(Ordering::Acquire)
-                                && !body.pair
-                            {
-                                // rejected a pair request
-                                self.pair_event.notify(usize::MAX);
+                            } else if self.is_paired() && !body.pair {
+                                // unpair
+
+                                self.config.certificate.take();
+                                self.config_provider
+                                    .store_device_config(&self.config)
+                                    .await?;
+                                handler.handle_pair_status_change(false).await;
                             }
-                            self.config_provider
-                                .store_device_config(&self.config)
-                                .await?;
                         }
                         Battery::TYPE => {
                             handler.handle_battery(json::from_value(packet.body)?).await;
@@ -309,7 +345,29 @@ impl Device {
                             self.stream_w.send(make_packet_str!(connectivity)?).await?;
                         }
                         Presenter::TYPE => {
-                            handler.handle_presenter(json::from_value(packet.body)?).await;
+                            handler
+                                .handle_presenter(json::from_value(packet.body)?)
+                                .await;
+                        }
+                        SystemVolume::TYPE => {
+                            handler
+                                .handle_system_volume(json::from_value(packet.body)?)
+                                .await;
+                        }
+                        SystemVolumeRequest::TYPE => {
+                            let request: SystemVolumeRequest = json::from_value(packet.body)?;
+                            if request.request_sinks.unwrap_or(false) {
+                                let system_volume = SystemVolume {
+                                    sink_list: Some(handler.get_system_volume().await),
+                                    enabled: None,
+                                    name: None,
+                                    muted: None,
+                                    volume: None,
+                                };
+                                self.stream_w.send(make_packet_str!(system_volume)?).await?;
+                            } else {
+                                handler.handle_system_volume_request(request).await;
+                            }
                         }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
@@ -331,6 +389,9 @@ impl Device {
                         A::GetConfig(response) => {
                             let _ = response.send(self.config.clone());
                         }
+                        A::GetKey(response) => {
+                            let _ = response.send(self.get_verification_key().await);
+                        }
                         A::GetPaired(response) => {
                             let _ = response.send(self.is_paired());
                         }
@@ -340,6 +401,8 @@ impl Device {
                             self.config_provider
                                 .store_device_config(&self.config)
                                 .await?;
+                            let pair_packet = Pair { pair: false };
+                            self.stream_w.send(make_packet_str!(pair_packet)?).await?;
                         }
                     }
                 }
@@ -352,6 +415,7 @@ impl Device {
 pub struct DeviceClient {
     client_w: mpsc::UnboundedSender<DeviceAction>,
     initiated_pair: Arc<AtomicBool>,
+    server_config: Arc<ServerConfig>,
 
     pair_event: Arc<Event>,
 }
@@ -361,12 +425,14 @@ impl DeviceClient {
         client_w: mpsc::UnboundedSender<DeviceAction>,
         initiated_pair: Arc<AtomicBool>,
         pair_event: Arc<Event>,
+        server_config: Arc<ServerConfig>
     ) -> Self {
         Self {
             client_w,
 
             initiated_pair,
             pair_event,
+            server_config,
         }
     }
 
@@ -395,6 +461,62 @@ impl DeviceClient {
     }
 
     pub async fn send_presenter_update(&self, packet: Presenter) -> Result<()> {
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn send_volume_update(&self, streams: Vec<SystemVolumeStream>) -> Result<()> {
+        let packet = SystemVolume {
+            sink_list: Some(streams),
+            name: None,
+            enabled: None,
+            muted: None,
+            volume: None,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn send_volume_stream_update(
+        &self,
+        id: String,
+        enabled: Option<bool>,
+        muted: Option<bool>,
+        volume: Option<i32>,
+    ) -> Result<()> {
+        let packet = SystemVolume {
+            sink_list: None,
+            name: Some(id),
+            enabled,
+            muted,
+            volume,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn request_volume_list(&self) -> Result<()> {
+        let packet = SystemVolumeRequest {
+            request_sinks: Some(true),
+            name: None,
+            enabled: None,
+            muted: None,
+            volume: None,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn send_volume_request(
+        &self,
+        name: String,
+        enabled: Option<bool>,
+        muted: Option<bool>,
+        volume: Option<i32>,
+    ) -> Result<()> {
+        let packet = SystemVolumeRequest {
+            request_sinks: None,
+            name: Some(name),
+            enabled,
+            muted,
+            volume,
+        };
         self.send_packet(make_packet_str!(packet)?).await
     }
 
@@ -438,6 +560,61 @@ impl DeviceClient {
         let packet = FindPhone {};
         self.send_packet(make_packet_str!(packet)?).await
     }
+
+    pub async fn get_verification_key(&self) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.client_w.send(DeviceAction::GetKey(tx))?;
+        rx.await?
+    }
+
+    pub async fn share_text(&self, text: String) -> Result<()> {
+        let packet = ShareRequest {
+            text: Some(text),
+            url: None,
+            filename: None,
+            creation_time: None,
+            last_modified: None,
+            open: None,
+            number_of_files: None,
+            total_payload_size: None,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn share_url(&self, url: String) -> Result<()> {
+        let packet = ShareRequest {
+            text: None,
+            url: Some(url),
+            filename: None,
+            creation_time: None,
+            last_modified: None,
+            open: None,
+            number_of_files: None,
+            total_payload_size: None,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn share_file(
+        &self,
+        file: DeviceFile<impl AsyncRead + Sync + Send + Unpin>,
+        open: bool,
+    ) -> Result<impl Future<Output = ()> + Sync + Send> {
+        let (port, fut) = create_payload(file.buf, self.server_config.clone()).await?;
+        let packet = ShareRequest {
+            text: None,
+            url: None,
+            filename: Some(file.name),
+            creation_time: file.creation_time,
+            last_modified: file.last_modified,
+            open: Some(open),
+            number_of_files: Some(1),
+            total_payload_size: None,
+        };
+        self.send_packet(make_packet_str_payload!(packet, file.size, port)?)
+            .await?;
+        Ok(fut)
+    }
 }
 
 #[async_trait::async_trait]
@@ -449,12 +626,49 @@ pub trait DeviceHandler {
     async fn handle_find_phone(&mut self);
     async fn handle_connectivity_report(&mut self, packet: ConnectivityReport);
     async fn handle_presenter(&mut self, packet: Presenter);
+    async fn handle_system_volume(&mut self, packet: SystemVolume);
+    async fn handle_system_volume_request(&mut self, packet: SystemVolumeRequest);
 
     async fn handle_pairing_request(&mut self) -> bool;
 
     async fn get_battery(&mut self) -> Battery;
     async fn get_clipboard_content(&mut self) -> String;
     async fn get_connectivity_report(&mut self) -> ConnectivityReport;
+    async fn get_system_volume(&mut self) -> Vec<SystemVolumeStream>;
 
     async fn handle_exit(&mut self);
+}
+
+pub struct DeviceFile<S: AsyncRead + Sync + Send + Unpin> {
+    buf: S,
+    size: i64,
+    name: String,
+    creation_time: Option<u128>,
+    last_modified: Option<u128>,
+}
+
+impl DeviceFile<File> {
+    pub async fn try_from_tokio(file: File, name: String) -> std::io::Result<Self> {
+        file.sync_all().await?;
+        let metadata = file.metadata().await?;
+        Ok(DeviceFile {
+            buf: file,
+            size: metadata.size().try_into().map_err(std::io::Error::other)?,
+            name,
+            creation_time: Some(
+                metadata
+                    .created()?
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("time went backwards")
+                    .as_millis(),
+            ),
+            last_modified: Some(
+                metadata
+                    .modified()?
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("time went backwards")
+                    .as_millis(),
+            ),
+        })
+    }
 }

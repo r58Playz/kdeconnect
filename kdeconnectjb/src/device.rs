@@ -3,7 +3,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
-    packets::{Battery, ConnectivityReport, DeviceType, Ping, Presenter},
+    packets::{
+        Battery, ConnectivityReport, DeviceType, Ping, Presenter, SystemVolume,
+        SystemVolumeRequest, SystemVolumeStream,
+    },
 };
 use log::info;
 use safer_ffi::prelude::*;
@@ -11,14 +14,33 @@ use tokio::sync::Mutex;
 
 use crate::{call_callback, call_callback_no_ret, STATE};
 
+#[derive(Default)]
+pub struct KConnectDeviceState {
+    pub battery: Option<Battery>,
+    pub clipboard: Option<String>,
+    pub connectivity: Option<ConnectivityReport>,
+    pub systemvolume: Option<Vec<SystemVolumeStream>>,
+}
+
+pub struct KConnectDevice {
+    pub client: Arc<DeviceClient>,
+    pub config: DeviceConfig,
+    pub state: Arc<Mutex<KConnectDeviceState>>,
+}
+
 pub struct KConnectHandler {
     state: Arc<Mutex<KConnectDeviceState>>,
     config: DeviceConfig,
     id: char_p::Box,
+    verification_key: char_p::Box,
 }
 
 impl KConnectHandler {
-    pub fn new(state: Arc<Mutex<KConnectDeviceState>>, mut config: DeviceConfig) -> Self {
+    pub fn new(
+        state: Arc<Mutex<KConnectDeviceState>>,
+        mut config: DeviceConfig,
+        verification_key: String,
+    ) -> Self {
         // we don't need the cert
         config.certificate.take();
         Self {
@@ -26,6 +48,8 @@ impl KConnectHandler {
             // this should never fail
             id: config.id.clone().try_into().unwrap(),
             config,
+            // this should never fail
+            verification_key: verification_key.try_into().unwrap(),
         }
     }
 }
@@ -88,18 +112,63 @@ impl DeviceHandler for KConnectHandler {
 
     async fn handle_connectivity_report(&mut self, packet: ConnectivityReport) {
         self.state.lock().await.connectivity.replace(packet);
-        // TODO: Add callback for connectivity report
+
+        let id = self.id.clone();
+        call_callback_no_ret!(connectivity_changed, id)
     }
 
     async fn handle_presenter(&mut self, _packet: Presenter) {
-        // Ignore
-        // TODO: maybe add support for moving the mouse? not much use on iOS though
+        // Ignore - not much use on iOS
+    }
+
+    async fn handle_system_volume(&mut self, packet: SystemVolume) {
+        info!("system volume: {:?}", packet);
+        if let Some(streams) = packet.sink_list {
+            self.state.lock().await.systemvolume.replace(streams);
+        } else if let Some(name) = packet.name {
+            let mut state = self.state.lock().await;
+            if let Some(stream) = state
+                .systemvolume
+                .as_mut()
+                .and_then(|x| x.iter_mut().find(|x| x.name == name))
+            {
+                if let Some(enabled) = packet.enabled {
+                    stream.enabled = Some(enabled);
+                }
+                if let Some(muted) = packet.muted {
+                    stream.muted = muted;
+                }
+                if let Some(volume) = packet.volume {
+                    stream.volume = volume;
+                }
+            }
+        }
+
+        let id = self.id.clone();
+        call_callback_no_ret!(volume_changed, id);
+    }
+
+    async fn handle_system_volume_request(&mut self, packet: SystemVolumeRequest) {
+        // name & enabled do nothing on iOS as there's only one systemvolume stream: Core Audio
+        if let Some(volume) = packet.volume {
+            call_callback_no_ret!(volume_change_requested, volume);
+        }
+        if let Some(muted) = packet.muted {
+            if muted {
+                call_callback_no_ret!(volume_change_requested, 0)
+            } else {
+                // STATE is always Some here
+                let vol = STATE.lock().await.as_ref().unwrap().current_volume;
+                call_callback_no_ret!(volume_change_requested, vol);
+            }
+        }
     }
 
     async fn handle_pairing_request(&mut self) -> bool {
         info!("recieved pair from {:?}", self.config);
         let id = self.id.clone();
-        let res = call_callback!(pairing_requested, id).unwrap_or(false);
+        let key = self.verification_key.clone();
+        let res = call_callback!(pairing_requested, id, key).unwrap_or(false);
 
         info!(
             "pair {} from {:?}",
@@ -132,6 +201,20 @@ impl DeviceHandler for KConnectHandler {
         }
     }
 
+    async fn get_system_volume(&mut self) -> Vec<SystemVolumeStream> {
+        // STATE will always be Some here
+        let vol = STATE.lock().await.as_ref().unwrap().current_volume;
+
+        vec![SystemVolumeStream {
+            name: "coreaudio".to_string(),
+            description: "Core Audio".to_string(),
+            muted: vol == 0,
+            volume: vol,
+            max_volume: Some(100),
+            enabled: None,
+        }]
+    }
+
     async fn handle_exit(&mut self) {
         // STATE will always be Some here
         STATE
@@ -141,20 +224,9 @@ impl DeviceHandler for KConnectHandler {
             .unwrap()
             .devices
             .retain(|x| x.config.id != self.config.id);
+        let id = self.id.clone();
+        call_callback_no_ret!(gone, id);
     }
-}
-
-#[derive(Default)]
-pub struct KConnectDeviceState {
-    pub battery: Option<Battery>,
-    pub clipboard: Option<String>,
-    pub connectivity: Option<ConnectivityReport>,
-}
-
-pub struct KConnectDevice {
-    pub client: Arc<DeviceClient>,
-    pub config: DeviceConfig,
-    pub state: Arc<Mutex<KConnectDeviceState>>,
 }
 
 #[derive_ReprC]
@@ -215,4 +287,29 @@ pub struct KConnectFfiDevice {
 pub struct KConnectFfiDeviceState {
     pub(crate) state: Arc<Mutex<KConnectDeviceState>>,
     pub(crate) client: Arc<DeviceClient>,
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectConnectivitySignal {
+    pub id: char_p::Box,
+    pub signal_type: char_p::Box,
+    pub strength: i32,
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectVolumeStream {
+    pub name: char_p::Box,
+    pub description: char_p::Box,
+
+    pub has_enabled: bool,
+    pub enabled: bool,
+
+    pub muted: bool,
+    
+    pub has_max_volume: bool,
+    pub max_volume: i32,
+
+    pub volume: i32,
 }

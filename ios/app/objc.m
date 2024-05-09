@@ -63,10 +63,6 @@ NSArray *getPairedDevices() {
   return [[daemonMessageCenter sendMessageAndReceiveReplyName:@"paired_device_list" userInfo:nil] objectForKey:@"info"];
 }
 
-NSDictionary *getDeviceInfo(NSString *id) {
-  return [daemonMessageCenter sendMessageAndReceiveReplyName:@"connected_device_info" userInfo:@{@"id":id}];
-}
-
 void rebroadcast() {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"rebroadcast" userInfo:nil];
 }
@@ -89,6 +85,14 @@ void sendPresenter(NSString *id, NSNumber *dx, NSNumber *dy) {
 
 void stopPresenter(NSString *id) {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"stop_presenter" userInfo:@{@"id":id}];
+}
+
+void requestVolume(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"get_volume" userInfo:@{@"id":id}];
+}
+
+void sendVolume(NSString *id, NSString *name, NSNumber *enabled, NSNumber *muted, NSNumber *volume) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"send_volume" userInfo:@{@"id":id,@"name":name,@"enabled":enabled,@"muted":muted,@"volume":volume}];
 }
 
 void sendExit() {

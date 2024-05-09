@@ -40,7 +40,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
     device::create_device,
-    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, FindPhone, Ping, Presenter, PROTOCOL_VERSION},
+    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, FindPhone, Ping, Presenter, ShareRequest, SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION},
     util::NoCertificateVerification,
 };
 
@@ -58,6 +58,8 @@ pub enum KdeConnectError {
     InvalidDnsName(#[from] tokio_rustls::rustls::pki_types::InvalidDnsNameError),
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
+    #[error(transparent)]
+    X509(#[from] x509_parser::nom::Err<x509_parser::error::X509Error>),
     #[error("Channel send error")]
     ChannelSendError,
     #[error("Channel recieve error")]
@@ -68,6 +70,8 @@ pub enum KdeConnectError {
     ServerAlreadyStarted,
     #[error("Failed to convert OsString to str")]
     OsStringConversionError,
+    #[error("Failed to find port for payload transfer")]
+    NoPayloadTransferPortFound,
     #[error("Other")]
     Other,
 
@@ -221,6 +225,8 @@ impl KdeConnect {
                 ClipboardConnect::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),
                 Presenter::TYPE.to_string(),
+                SystemVolume::TYPE.to_string(),
+                SystemVolumeRequest::TYPE.to_string(),
             ],
             outgoing_capabilities: vec![
                 Ping::TYPE.to_string(),
@@ -230,6 +236,9 @@ impl KdeConnect {
                 ClipboardConnect::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),
                 Presenter::TYPE.to_string(),
+                SystemVolume::TYPE.to_string(),
+                SystemVolumeRequest::TYPE.to_string(),
+                ShareRequest::TYPE.to_string(),
             ],
             tcp_port,
         };
@@ -301,6 +310,7 @@ impl KdeConnect {
                         self.config.clone(),
                         stream.into(),
                         self.connected_clients.clone(),
+                        self.server_tls_config.clone(),
                     )
                     .await?;
 
@@ -363,6 +373,7 @@ impl KdeConnect {
                         self.config.clone(),
                         stream.into(),
                         self.connected_clients.clone(),
+                        self.server_tls_config.clone(),
                     )
                     .await?;
 

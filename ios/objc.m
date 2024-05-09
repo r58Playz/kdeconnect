@@ -8,6 +8,7 @@
 #import "headers/CTDataStatus.h"
 #import "headers/CTXPCServiceSubscriptionContext.h"
 #import "headers/MobileWiFi/MobileWiFi.h"
+#import "headers/MPVolumeController.h"
 
 #import "kdeconnectjb.h"
 #import "server.h"
@@ -29,6 +30,8 @@ NSString *KDECONNECT_DATA_PATH;
 NSMutableArray *TRUSTED_NETWORKS;
 NSString *CURRENT_CLIPBOARD = @"";
 
+float CURRENT_VOLUME = 0.0f;
+
 CPDistributedMessagingCenter *tweakMessageCenter;
 CPDistributedMessagingCenter *appMessageCenter;
 
@@ -36,6 +39,8 @@ CoreTelephonyClient *telephonyClient;
 
 WiFiManagerRef wifiManager;
 WiFiDeviceClientRef wifiClient;
+
+MPVolumeController *volumeClient;
 
 NSString *getDeviceId() {
   NSString *uuid = (__bridge NSString *)MGCopyAnswer(
@@ -118,22 +123,32 @@ void discovered_callback(char* device_id) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"retrieved discovered device: %s", device_by_id->name);
+    kdeconnect_device_request_volume(device_by_id);
     trySendRefreshToApp();
     kdeconnect_free_device(device_by_id);
   }
   kdeconnect_free_string(device_id);
 }
 
-bool pairing_callback(char* device_id) {
+void gone_callback(char *device_id) {
+  trySendRefreshToApp();
+  kdeconnect_free_string(device_id);
+}
+
+bool pairing_callback(char* device_id, char* device_key) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
   if (device_by_id) {
     NSLog(@"retrieved device that wants to pair: %s", device_by_id->name);
 
     NSString *devName = [NSString stringWithUTF8String:device_by_id->name];
+    NSString *key = [NSString stringWithUTF8String:device_key];
     NSMutableDictionary *alert = [[NSMutableDictionary alloc] init];
+
+    NSString *message = [[[@"Recieved pairing request from device: " stringByAppendingString:devName] stringByAppendingString:@"\nkey: "] stringByAppendingString: key];
+
     [alert addEntriesFromDictionary:@{
       (__bridge NSString*)kCFUserNotificationAlertHeaderKey:@"KDE Connect",
-      (__bridge NSString*)kCFUserNotificationAlertMessageKey:[@"Recieved pairing request from device: " stringByAppendingString:devName],
+      (__bridge NSString*)kCFUserNotificationAlertMessageKey:message,
       (__bridge NSString*)kCFUserNotificationDefaultButtonTitleKey:@"Decline",
       (__bridge NSString*)kCFUserNotificationAlternateButtonTitleKey:@"Accept",
     }];
@@ -145,9 +160,11 @@ bool pairing_callback(char* device_id) {
 
     kdeconnect_free_device(device_by_id);
     kdeconnect_free_string(device_id);
+    kdeconnect_free_string(device_key);
     return cfRes == 1;
   }
   kdeconnect_free_string(device_id);
+  kdeconnect_free_string(device_key);
   return false;
 }
 
@@ -162,12 +179,7 @@ void pair_status_changed_callback(char* device_id, bool pair_status) {
 }
 
 void battery_callback(char *device_id) {
-  KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
-  if (device_by_id) {
-    NSLog(@"device sent battery data: %s", device_by_id->name);
-    trySendRefreshToApp();
-    kdeconnect_free_device(device_by_id);
-  }
+  trySendRefreshToApp();
   kdeconnect_free_string(device_id);
 }
 
@@ -239,6 +251,21 @@ void find_callback() {
   [player stop];
 
   NSLog(@"i am no longer lost!");
+}
+
+void connectivity_callback(char *device_id) {
+  trySendRefreshToApp();
+  kdeconnect_free_string(device_id);
+}
+
+void device_volume_callback(char *device_id) {
+  trySendRefreshToApp();
+  kdeconnect_free_string(device_id);
+}
+
+void volume_change_callback(int vol) {
+  float newVol = ((float)vol) / 100.0f;
+  [volumeClient setVolume:newVol withNotificationDelay:0.0f];
 }
 
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
@@ -320,6 +347,8 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     telephonyClient = [[CoreTelephonyClient alloc] init];
     [telephonyClient setMux:telephonyClientMux];
 
+    volumeClient = [[MPVolumeController alloc] init];
+
     NSString *deviceId = getDeviceId();
     if (!deviceId) {
       NSLog(@"error: No device id\n");
@@ -333,12 +362,16 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
 
     kdeconnect_register_init_callback(initialized_callback);
     kdeconnect_register_discovered_callback(discovered_callback);
+    kdeconnect_register_gone_callback(gone_callback);
     kdeconnect_register_pairing_callback(pairing_callback);
     kdeconnect_register_pair_status_changed_callback(pair_status_changed_callback);
     kdeconnect_register_battery_callback(battery_callback);
     kdeconnect_register_clipboard_callback(clipboard_callback);
     kdeconnect_register_ping_callback(ping_callback);
     kdeconnect_register_find_callback(find_callback);
+    kdeconnect_register_connectivity_callback(connectivity_callback);
+    kdeconnect_register_volume_change_callback(volume_change_callback);
+    kdeconnect_register_device_volume_callback(device_volume_callback);
 
     NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
@@ -390,6 +423,15 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
         exit(0);
       }
     });
+    
+    CFRunLoopTimerRef volumeLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 10.0, 0, 0, ^(CFRunLoopTimerRef timer){
+      [volumeClient getVolumeValueWithCompletion:^(float resp){
+        if (resp != CURRENT_VOLUME) {
+          kdeconnect_set_volume((int)(resp * 100));
+          CURRENT_VOLUME = resp;
+        }
+      }];
+    });
 
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);
@@ -397,6 +439,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     CFRunLoopAddTimer(CFRunLoopGetMain(), clipboardLoop, kCFRunLoopDefaultMode);
     CFRunLoopAddTimer(CFRunLoopGetMain(), connectivityLoop, kCFRunLoopDefaultMode);
     CFRunLoopAddTimer(CFRunLoopGetMain(), trustedNetworkLoop, kCFRunLoopDefaultMode);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), volumeLoop, kCFRunLoopDefaultMode);
 
     CFRunLoopRun();
 

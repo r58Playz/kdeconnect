@@ -52,6 +52,15 @@ pub struct Packet {
     #[serde(rename = "type")]
     pub packet_type: String,
     pub body: Value,
+    #[serde(rename = "payloadSize")]
+    pub payload_size: Option<i64>,
+    #[serde(rename = "payloadTransferInfo")]
+    pub payload_transfer_info: Option<PacketPayloadTransferInfo>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PacketPayloadTransferInfo {
+    pub port: u16,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -180,6 +189,25 @@ pub enum ConnectivityReportNetworkType {
     Unknown,
 }
 
+impl Display for ConnectivityReportNetworkType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ConnectivityReportNetworkType as C;
+        match self {
+            C::Gsm => write!(f, "GSM"),
+            C::Cdma => write!(f, "CDMA"),
+            C::Iden => write!(f, "iDEN"),
+            C::Umts => write!(f, "UMTS"),
+            C::Cdma2000 => write!(f, "CDMA2000"),
+            C::Edge => write!(f, "EDGE"),
+            C::Gprs => write!(f, "GPRS"),
+            C::Hspa => write!(f, "HSPA"),
+            C::Lte => write!(f, "LTE"),
+            C::FiveG => write!(f, "5G"),
+            C::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct ConnectivityReportRequest {}
 derive_type!(
@@ -191,9 +219,66 @@ derive_type!(
 pub struct Presenter {
     pub dx: Option<f32>,
     pub dy: Option<f32>,
-    pub stop: Option<bool>
+    pub stop: Option<bool>,
 }
 derive_type!(Presenter, "kdeconnect.presenter");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemVolume {
+    pub sink_list: Option<Vec<SystemVolumeStream>>,
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub muted: Option<bool>,
+    pub volume: Option<i32>,
+}
+derive_type!(SystemVolume, "kdeconnect.systemvolume");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemVolumeStream {
+    pub name: String,
+    pub description: String,
+    pub enabled: Option<bool>,
+    pub muted: bool,
+    pub max_volume: Option<i32>,
+    pub volume: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemVolumeRequest {
+    // this may happen again
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_sinks: Option<bool>,
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub muted: Option<bool>,
+    pub volume: Option<i32>,
+}
+derive_type!(SystemVolumeRequest, "kdeconnect.systemvolume.request");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRequest {
+    pub filename: Option<String>,
+    pub creation_time: Option<u128>,
+    pub last_modified: Option<u128>,
+    pub open: Option<bool>,
+    pub number_of_files: Option<i32>,
+    pub total_payload_size: Option<i64>,
+    pub text: Option<String>,
+    pub url: Option<String>,
+}
+derive_type!(ShareRequest, "kdeconnect.share.request");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRequestUpdate {
+    pub number_of_files: Option<i32>,
+    pub total_payload_size: Option<i64>,
+}
+derive_type!(ShareRequestUpdate, "kdeconnect.share.request.update");
 
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway
@@ -204,6 +289,21 @@ macro_rules! make_packet {
             id: $crate::util::get_time_ms().to_string(),
             packet_type: $packet.get_type_self().to_string(),
             body: serde_json::value::to_value($packet).expect("packet was invalid"),
+            payload_size: None,
+            payload_transfer_info: None,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! make_packet_payload {
+    ($packet:ident, $payload_size:expr, $payload_port:expr) => {
+        Packet {
+            id: $crate::util::get_time_ms().to_string(),
+            packet_type: $packet.get_type_self().to_string(),
+            body: serde_json::value::to_value($packet).expect("packet was invalid"),
+            payload_size: Some($payload_size),
+            payload_transfer_info: Some(PacketPayloadTransferInfo { port: $payload_port }),
         }
     };
 }
@@ -212,5 +312,12 @@ macro_rules! make_packet {
 macro_rules! make_packet_str {
     ($packet:ident) => {
         serde_json::to_string(&make_packet!($packet)).map(|x| x + "\n")
+    };
+}
+
+#[macro_export]
+macro_rules! make_packet_str_payload {
+    ($packet:ident, $payload_size:expr, $payload_port:expr) => {
+        serde_json::to_string(&make_packet_payload!($packet, $payload_size, $payload_port)).map(|x| x + "\n")
     };
 }

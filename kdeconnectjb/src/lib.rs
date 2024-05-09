@@ -1,4 +1,4 @@
-#![feature(once_cell_try)]
+#![feature(once_cell_try, let_chains)]
 #[macro_use]
 mod utils;
 mod device;
@@ -11,12 +11,17 @@ use std::{
 };
 
 use device::{
-    KConnectDevice, KConnectDeviceState, KConnectFfiDevice, KConnectFfiDeviceInfo,
-    KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
+    KConnectConnectivitySignal, KConnectDevice, KConnectDeviceState, KConnectFfiDevice,
+    KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
+    KConnectVolumeStream,
 };
 use kdeconnect::{
     config::FsConfig,
-    packets::{Battery, ConnectivityReportNetworkType, ConnectivityReportSignal, Presenter},
+    device::DeviceFile,
+    packets::{
+        Battery, ConnectivityReport, ConnectivityReportNetworkType, ConnectivityReportSignal,
+        Presenter,
+    },
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
 use log::info;
@@ -28,6 +33,7 @@ use safer_ffi::{boxed::Box_, ffi_export, prelude::*};
 #[cfg(target_os = "ios")]
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::{
+    fs::File,
     runtime::{Builder, Runtime},
     sync::Mutex,
 };
@@ -44,6 +50,7 @@ struct KConnectState {
     current_battery: Battery,
     current_clipboard: String,
     current_signals: HashMap<String, ConnectivityReportSignal>,
+    current_volume: i32,
     being_found: bool,
 }
 
@@ -60,6 +67,7 @@ impl KConnectState {
             },
             current_clipboard: String::new(),
             current_signals: HashMap::new(),
+            current_volume: 0,
             being_found: false,
         }
     }
@@ -68,13 +76,17 @@ impl KConnectState {
 struct KConnectCallbacks {
     pub initialized: Option<Arc<dyn Fn() + Sync + Send>>,
     pub discovered: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub gone: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
 
     pub ping_recieved: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub pair_status_changed: Option<Arc<dyn Fn(char_p::Box, bool) + Sync + Send>>,
     pub battery_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub clipboard_changed: Option<Arc<dyn Fn(char_p::Box, char_p::Box) + Sync + Send>>,
-    pub pairing_requested: Option<Arc<dyn Fn(char_p::Box) -> bool + Sync + Send>>,
+    pub pairing_requested: Option<Arc<dyn Fn(char_p::Box, char_p::Box) -> bool + Sync + Send>>,
     pub find_requested: Option<Arc<dyn Fn() + Sync + Send>>,
+    pub connectivity_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub volume_change_requested: Option<Arc<dyn Fn(i32) + Sync + Send>>,
+    pub volume_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
 }
 
 impl KConnectCallbacks {
@@ -82,6 +94,7 @@ impl KConnectCallbacks {
         Self {
             initialized: None,
             discovered: None,
+            gone: None,
 
             ping_recieved: None,
             pair_status_changed: None,
@@ -89,6 +102,9 @@ impl KConnectCallbacks {
             clipboard_changed: None,
             pairing_requested: None,
             find_requested: None,
+            connectivity_changed: None,
+            volume_change_requested: None,
+            volume_changed: None,
         }
     }
 }
@@ -154,6 +170,13 @@ callback!(
 );
 
 callback!(
+    kdeconnect_register_gone_callback,
+    extern "C" fn(char_p::Box) -> (),
+    gone,
+    x
+);
+
+callback!(
     kdeconnect_register_ping_callback,
     extern "C" fn(char_p::Box) -> (),
     ping_recieved,
@@ -185,15 +208,37 @@ callback!(
 
 callback!(
     kdeconnect_register_pairing_callback,
-    extern "C" fn(char_p::Box) -> bool,
+    extern "C" fn(char_p::Box, char_p::Box) -> bool,
     pairing_requested,
-    x
+    x,
+    y
 );
 
 callback!(
     kdeconnect_register_find_callback,
     extern "C" fn() -> (),
     find_requested,
+);
+
+callback!(
+    kdeconnect_register_connectivity_callback,
+    extern "C" fn(char_p::Box) -> (),
+    connectivity_changed,
+    x
+);
+
+callback!(
+    kdeconnect_register_device_volume_callback,
+    extern "C" fn(char_p::Box) -> (),
+    volume_changed,
+    x
+);
+
+callback!(
+    kdeconnect_register_volume_change_callback,
+    extern "C" fn(i32) -> (),
+    volume_change_requested,
+    x
 );
 
 #[ffi_export]
@@ -260,7 +305,9 @@ pub extern "C" fn kdeconnect_start(
             call_callback_no_ret!(initialized,);
 
             info!("discovering");
-            while let Some((mut dev, client)) = device_stream.next().await {
+            while let Some((mut dev, client)) = device_stream.next().await
+                && let Ok(key) = dev.get_verification_key().await
+            {
                 info!(
                     "new device discovered: id {:?} name {:?} type {:?}",
                     dev.config.id, dev.config.name, dev.config.device_type
@@ -269,12 +316,31 @@ pub extern "C" fn kdeconnect_start(
                 let config = dev.config.clone();
 
                 #[allow(clippy::redundant_closure)]
-                let handler = Box::new(KConnectHandler::new(state.clone(), dev.config.clone()));
+                let handler =
+                    Box::new(KConnectHandler::new(state.clone(), dev.config.clone(), key));
 
                 // this should never fail
                 let id = dev.config.id.clone().try_into().unwrap();
 
                 tokio::spawn(async move { dev.task(handler).await });
+
+                info!(
+                    "file sharing ret {:?}",
+                    async {
+                        let file = File::open("/var/jb/var/mobile/kdeconnect/trusted").await?;
+
+                        tokio::spawn(
+                            client
+                                .share_file(
+                                    DeviceFile::try_from_tokio(file, "trusted".to_string()).await?,
+                                    true,
+                                )
+                                .await?,
+                        );
+                        Ok::<(), KdeConnectError>(())
+                    }
+                    .await
+                );
 
                 // STATE will always be Some
                 STATE
@@ -558,7 +624,41 @@ pub extern "C" fn kdeconnect_device_get_clipboard_content(
     }
 }
 
-// TODO: Add function to get connectivity report
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_connectivity_report(
+    device: &KConnectFfiDevice,
+) -> repr_c::Vec<KConnectConnectivitySignal> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut out = Vec::new();
+
+            if let Some(connectivity) = device.state.state.lock().await.connectivity.as_ref() {
+                for signal in connectivity.signal_strengths.iter() {
+                    out.push(KConnectConnectivitySignal {
+                        // this should never fail
+                        id: signal.0.clone().try_into().unwrap(),
+                        // this should never fail
+                        signal_type: signal.1.network_type.to_string().try_into().unwrap(),
+                        strength: signal.1.signal_strength,
+                    })
+                }
+            }
+
+            Ok::<Vec<_>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_connectivity_report(
+    report: repr_c::Vec<KConnectConnectivitySignal>,
+) {
+    drop(report);
+}
 
 #[ffi_export]
 pub extern "C" fn kdeconnect_device_send_ping(device: &KConnectFfiDevice) -> bool {
@@ -633,9 +733,7 @@ pub extern "C" fn kdeconnect_device_send_presenter(
 }
 
 #[ffi_export]
-pub extern "C" fn kdeconnect_device_stop_presenter(
-    device: &KConnectFfiDevice,
-) -> bool {
+pub extern "C" fn kdeconnect_device_stop_presenter(device: &KConnectFfiDevice) -> bool {
     if let Ok(rt) = build_runtime!() {
         rt.block_on(async {
             device
@@ -646,6 +744,81 @@ pub extern "C" fn kdeconnect_device_stop_presenter(
                     dy: None,
                     stop: Some(true),
                 })
+                .await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_request_volume(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.request_volume_list().await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_volume(
+    device: &KConnectFfiDevice,
+) -> repr_c::Vec<KConnectVolumeStream> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut out = Vec::new();
+
+            if let Some(volume) = device.state.state.lock().await.systemvolume.as_ref() {
+                for stream in volume.iter() {
+                    out.push(KConnectVolumeStream {
+                        // this should never fail
+                        name: stream.name.clone().try_into().unwrap(),
+                        // this should never fail
+                        description: stream.description.clone().try_into().unwrap(),
+
+                        has_enabled: stream.enabled.is_some(),
+                        enabled: stream.enabled.unwrap_or(false),
+
+                        has_max_volume: stream.max_volume.is_some(),
+                        max_volume: stream.max_volume.unwrap_or(-1),
+
+                        muted: stream.muted,
+                        volume: stream.volume,
+                    });
+                }
+            }
+
+            Ok::<Vec<_>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_volume(report: repr_c::Vec<KConnectVolumeStream>) {
+    drop(report);
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_send_volume_update(
+    device: &KConnectFfiDevice,
+    name: char_p::Ref<'_>,
+    enabled: bool,
+    muted: bool,
+    volume: i32,
+) -> bool {
+    let name = name.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .client
+                .send_volume_request(name, Some(enabled), Some(muted), Some(volume))
                 .await
         })
         .is_ok()
@@ -773,6 +946,57 @@ pub extern "C" fn kdeconnect_add_connectivity_signal(
                         signal_strength: signal,
                     },
                 );
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_send_connectivity_update() -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+
+            for device in state.devices.iter() {
+                device
+                    .client
+                    .send_connectivity_report(ConnectivityReport {
+                        signal_strengths: state.current_signals.clone(),
+                    })
+                    .await?;
+            }
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_set_volume(vol: i32) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+
+            state.current_volume = vol;
+
+            for device in state.devices.iter() {
+                device
+                    .client
+                    .send_volume_stream_update(
+                        "coreaudio".to_string(),
+                        Some(true),
+                        Some(vol == 0),
+                        Some(vol),
+                    )
+                    .await?;
+            }
             Ok::<(), KdeConnectError>(())
         })
         .is_ok()

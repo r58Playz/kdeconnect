@@ -3,7 +3,6 @@ import CoreMotion
 
 var motionManager: CMMotionManager = CMMotionManager()
 
-
 enum DeviceType: Int, CaseIterable, Identifiable {
     case desktop = 0
     case laptop = 1
@@ -67,6 +66,21 @@ struct PairedDevice: Identifiable, Equatable {
     var type: DeviceType 
 }
 
+struct ConnectedDeviceConnectivitySignal: Identifiable, Equatable {
+    var id: String
+    var type: String
+    var strength: Int
+}
+
+struct ConnectedDeviceVolumeStream: Identifiable, Equatable {
+    var id: String
+    var description: String
+    var enabled: Bool?
+    var muted: Bool
+    var maxVolume: Int
+    var volume: Int
+}
+
 struct ConnectedDevice: Identifiable, Equatable {
     var name: String
     var id: String
@@ -76,6 +90,8 @@ struct ConnectedDevice: Identifiable, Equatable {
     var batteryCharging: Bool
     var batteryLow: Bool
     var clipboard: String
+    var connectivity: [ConnectedDeviceConnectivitySignal]
+    var volume: [ConnectedDeviceVolumeStream]
 }
 
 func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
@@ -119,7 +135,7 @@ struct ContentView: View {
         let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
         if kdeconnectd != nil {
             do {
-                try self.refreshConnectedDevices(e:false)
+                try self.refreshConnectedDevices()
                 try self.refreshPairedDevices()
             } catch {
                 // ignore
@@ -127,7 +143,31 @@ struct ContentView: View {
         }
     }
 
-    func refreshConnectedDevices(e:Bool) throws {
+    func parseConnectivity(dict: NSDictionary) throws -> ConnectedDeviceConnectivitySignal {
+        if let id = dict.value(forKey: "id") as? String,
+            let type = dict.value(forKey: "type") as? String,
+            let signal = dict.value(forKey: "signal") as? Int {
+            return ConnectedDeviceConnectivitySignal(id: id, type: type, strength: signal)
+        } else {
+            throw "Error parsing connected device connectivity"
+        }
+    }
+
+    func parseVolume(dict: NSDictionary) throws -> ConnectedDeviceVolumeStream {
+        if let name = dict.value(forKey: "name") as? String,
+            let description = dict.value(forKey: "description") as? String,
+            let hasEnabled = dict.value(forKey: "has_enabled") as? Bool,
+            let enabled = dict.value(forKey: "enabled") as? Bool,
+            let muted = dict.value(forKey: "muted") as? Bool,
+            let maxVolume = dict.value(forKey: "max_volume") as? Int,
+            let volume = dict.value(forKey: "volume") as? Int {
+            return ConnectedDeviceVolumeStream(id: name, description: description, enabled: hasEnabled ? enabled : nil, muted: muted, maxVolume: maxVolume, volume: volume)
+        } else {
+            throw "Error parsing connected device connectivity"
+        }
+    }
+
+    func refreshConnectedDevices() throws {
         guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
             throw "Error getting connected devices"
         }
@@ -140,7 +180,11 @@ struct ContentView: View {
                 let batteryCharging = $0.value(forKey: "battery_charging") as? Int,
                 let batteryUnderThreshold = $0.value(forKey: "battery_under_threshold") as? Int,
                 let clipboard = $0.value(forKey: "clipboard") as? String,
-                let parsedType = DeviceType(rawValue: type) {
+                let connectivity = $0.value(forKey: "connectivity") as? [NSDictionary],
+                let volume = $0.value(forKey: "volume") as? [NSDictionary],
+                let parsedType = DeviceType(rawValue: type),
+                let parsedConnectivity = try? connectivity.map({ try parseConnectivity(dict: $0) }),
+                let parsedVolume = try? volume.map({ try parseVolume(dict: $0) }) {
                     let device = ConnectedDevice(
                         name: name,
                         id: id,
@@ -149,7 +193,9 @@ struct ContentView: View {
                         batteryLevel: batteryLevel,
                         batteryCharging: batteryCharging == 1,
                         batteryLow: batteryUnderThreshold == 1,
-                        clipboard: clipboard
+                        clipboard: clipboard,
+                        connectivity: parsedConnectivity,
+                        volume: parsedVolume
                     )
                     return device
             } else {
@@ -190,7 +236,7 @@ struct ContentView: View {
         if kdeconnectd != nil {
             do {
                 rebroadcast()
-                try self.refreshConnectedDevices(e:true)
+                try self.refreshConnectedDevices()
                 try self.refreshPairedDevices()
             } catch {
                 UIApplication.shared.alert(body: error.localizedDescription)
@@ -203,39 +249,47 @@ struct ContentView: View {
             VStack {
                 List {
                     Section(header: Text("Connected devices")) {
-                        ForEach(self.$data.connected, id: \.id) { $device in
-                            NavigationLink {
-                                ConnectedDeviceView(device: $device, refresh: { refreshDevicesViews() })
-                            } label: {
-                                HStack {
-                                    Image(systemName: device.type.toSFSymbol())
-                                    if device.paired {
-                                        if device.batteryCharging {
-                                            Image(systemName: "battery.100.bolt").foregroundStyle(.green)
-                                        } else if device.batteryLow {
-                                            Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
-                                        } else {
-                                            Image(systemName: batteryToSFSymbol(device: $device))
+                        if (self.$data.connected.count > 0) {
+                            ForEach(self.$data.connected, id: \.id) { $device in
+                                NavigationLink {
+                                    ConnectedDeviceView(device: $device, refresh: { refreshDevicesViews() })
+                                } label: {
+                                    HStack {
+                                        Image(systemName: device.type.toSFSymbol())
+                                        if device.paired {
+                                            if device.batteryCharging {
+                                                Image(systemName: "battery.100.bolt").foregroundStyle(.green)
+                                            } else if device.batteryLow {
+                                                Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
+                                            } else {
+                                                Image(systemName: batteryToSFSymbol(device: $device))
+                                            }
+                                            Text(device.batteryLevel, format: .percent)
                                         }
-                                        Text(device.batteryLevel, format: .percent)
-                                    }
-                                    VStack(alignment: .leading) {
-                                        Text(device.name).lineLimit(1).truncationMode(.tail)
-                                        Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
+                                        VStack(alignment: .leading) {
+                                            Text(device.name).lineLimit(1).truncationMode(.tail)
+                                            Text(device.id).font(.system(.caption, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+                                        }
                                     }
                                 }
                             }
+                        } else {
+                            Text("Connected devices will appear here.").padding(.vertical, 4)
                         }
                     }
                     Section(header: Text("Paired devices")) {
-                        ForEach(self.$data.paired, id: \.id) { $device in
-                            HStack {
-                                Image(systemName: device.type.toSFSymbol())
-                                VStack(alignment: .leading) {
-                                    Text(device.name).lineLimit(1).truncationMode(.tail)
-                                    Text(device.id).font(.caption).lineLimit(1).truncationMode(.tail)
+                        if (self.$data.paired.count > 0) {
+                            ForEach(self.$data.paired, id: \.id) { $device in
+                                HStack {
+                                    Image(systemName: device.type.toSFSymbol())
+                                    VStack(alignment: .leading) {
+                                        Text(device.name).lineLimit(1).truncationMode(.tail)
+                                        Text(device.id).font(.system(.caption, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+                                    }
                                 }
                             }
+                        } else {
+                            Text("Paired devices that are disconnected will appear here.").padding(.vertical, 4)
                         }
                     }
                     Section(header: Text("Tools")) {
@@ -282,6 +336,7 @@ struct ContentView: View {
                                 """)
                                 .multilineTextAlignment(.leading)
                         }
+                        Link("Code", destination: URL(string: "https://github.com/r58Playz/kdeconnect")!)
                     }
                     Section(header: Text("Credits")) {
                         VStack(alignment: .leading) {
@@ -302,6 +357,17 @@ struct ContentView: View {
                                 .padding(.bottom, 4)
                             Text("Without their effort, the KDE Connect protocol and apps would not exist.")
                         }
+                        VStack(alignment: .leading) {
+                            Link("Theos Team", destination: URL(string: "https://theos.dev")!)
+                                .font(.system(.title2, design: .monospaced))
+                                .padding(.bottom, 4)
+                            Text(
+                                """
+                                This project uses the Theos toolchain and build system extensively. \
+                                Also, members in the Theos Discord helped reverse-engineer multiple private APIs used in this project.
+                                """
+                            )
+                        }
                     }
                 }
                 .listStyle(InsetGroupedListStyle())
@@ -313,111 +379,4 @@ struct ContentView: View {
         }
         .navigationViewStyle(.stack)
 	}
-}
-
-struct ConnectedDeviceView: View {
-    var device: Binding<ConnectedDevice>
-    var refresh: () -> Void
-
-    @ViewBuilder var actions: some View {
-        Section(header: Text("Actions")) {
-            Button(device.paired.wrappedValue ? "Unpair" : "Pair") {
-                sendPairReq(device.id.wrappedValue, device.paired.wrappedValue ? 0 : 1)
-            }
-            Button("Send ping") {
-                sendPing(device.id.wrappedValue)
-            }
-            Button("Find") {
-                sendFind(device.id.wrappedValue)
-            }
-            NavigationLink("Presenter") {
-                PresenterView(device: device)
-            }
-        }
-    }
-
-    @ViewBuilder var info: some View {
-        Section(header: Text("Information")) {
-            HStack {
-                Text("Name")
-                Spacer()
-                Text(device.name.wrappedValue)
-            }
-            HStack {
-                Text("ID")
-                Spacer()
-                Text(device.id)
-            }
-            HStack {
-                Text("Type")
-                Spacer()
-                Text(device.type.wrappedValue.toString())
-            }
-            HStack {
-                Text("Paired")
-                Spacer()
-                Text(device.paired.wrappedValue ? "Yes" : "No")
-            }
-        }
-    }
-
-    @ViewBuilder var state: some View {
-        Section(header: Text("State")) {
-            HStack {
-                Text("Battery level")
-                Spacer()
-                Text("\(device.batteryLevel.wrappedValue)")
-            }
-            HStack {
-                Text("Battery charging")
-                Spacer()
-                Text(device.batteryCharging.wrappedValue ? "Yes" : "No")
-            }
-            HStack {
-                Text("Battery low")
-                Spacer()
-                Text(device.batteryLow.wrappedValue ? "Yes" : "No")
-            }
-            NavigationLink("Clipboard") {
-                ClipboardView(device: device, refresh: { refresh() })
-            }
-        }
-    }
-
-    var body: some View {
-        VStack {
-            List {
-                actions
-                info
-                state
-            }
-            .listStyle(InsetGroupedListStyle())
-            .refreshable {
-                refresh()
-            }
-        }
-        .navigationTitle(device.name.wrappedValue)
-    }
-}
-
-struct ClipboardView: View {
-    var device: Binding<ConnectedDevice>
-    var refresh: () -> Void
-    var body: some View {
-        VStack {
-            List {
-                Button("Copy") {
-                    UIPasteboard.general.string = device.clipboard.wrappedValue
-                }
-                Text(device.clipboard.wrappedValue)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .font(.system(.body, design: .monospaced))
-            }
-        }
-        .navigationTitle("Clipboard")
-        .refreshable {
-            refresh()
-        }
-    }
 }
