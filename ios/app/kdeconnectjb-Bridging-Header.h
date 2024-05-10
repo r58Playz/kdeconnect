@@ -17,9 +17,8 @@ void sendPresenter(NSString *id, NSNumber *dx, NSNumber *dy);
 void stopPresenter(NSString *id);
 void requestVolume(NSString *id);
 void sendVolume(NSString *id, NSString *name, NSNumber *enabled, NSNumber *muted, NSNumber *volume);
+void sendFiles(NSString *id, NSArray *files, NSNumber* open);
 void sendExit();
-
-NSArray *sysctl_ps(void);
 
 @class KConnectSwiftServer;
 

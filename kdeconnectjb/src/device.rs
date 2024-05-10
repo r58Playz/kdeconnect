@@ -1,16 +1,21 @@
-use std::sync::Arc;
+use std::{error::Error, ffi::OsStr, path::PathBuf, pin::Pin, sync::Arc, time::SystemTime};
 
 use async_trait::async_trait;
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
     packets::{
-        Battery, ConnectivityReport, DeviceType, Ping, Presenter, SystemVolume,
-        SystemVolumeRequest, SystemVolumeStream,
+        Battery, ConnectivityReport, DeviceType, Ping, Presenter, ShareRequest, ShareRequestUpdate,
+        SystemVolume, SystemVolumeRequest, SystemVolumeStream,
     },
+    KdeConnectError,
 };
-use log::info;
+use log::{error, info};
 use safer_ffi::prelude::*;
-use tokio::sync::Mutex;
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncWriteExt},
+    sync::Mutex,
+};
 
 use crate::{call_callback, call_callback_no_ret, STATE};
 
@@ -33,6 +38,7 @@ pub struct KConnectHandler {
     config: DeviceConfig,
     id: char_p::Box,
     verification_key: char_p::Box,
+    documents_path: PathBuf,
 }
 
 impl KConnectHandler {
@@ -40,6 +46,7 @@ impl KConnectHandler {
         state: Arc<Mutex<KConnectDeviceState>>,
         mut config: DeviceConfig,
         verification_key: String,
+        documents_path: PathBuf,
     ) -> Self {
         // we don't need the cert
         config.certificate.take();
@@ -50,6 +57,7 @@ impl KConnectHandler {
             config,
             // this should never fail
             verification_key: verification_key.try_into().unwrap(),
+            documents_path,
         }
     }
 }
@@ -162,6 +170,67 @@ impl DeviceHandler for KConnectHandler {
                 call_callback_no_ret!(volume_change_requested, vol);
             }
         }
+    }
+
+    async fn handle_multi_file_share(&mut self, _packet: ShareRequestUpdate) {
+        // ignore
+    }
+
+    async fn handle_file_share(
+        &mut self,
+        packet: ShareRequest,
+        _size: i64,
+        mut data: Pin<Box<dyn AsyncRead + Sync + Send>>,
+    ) {
+        let ret = async {
+            let current_time = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_millis();
+            let mut path = self
+                .documents_path
+                .join(packet.filename.unwrap_or(current_time.to_string()));
+            if tokio::fs::try_exists(&path).await? {
+                let current_name = path
+                    .file_name()
+                    .unwrap_or(OsStr::new(""))
+                    .to_os_string()
+                    .into_string()
+                    .map_err(|_| KdeConnectError::OsStringConversionError)?;
+                path.set_file_name(current_time.to_string() + &current_name);
+            }
+            let mut file = File::create(&path).await?;
+            // kdeconnect-kde is weird sometimes and closes without properly closing TLS
+            let _ = tokio::io::copy(&mut data, &mut file).await;
+            let _ = file.shutdown().await;
+            let _ = file.sync_all().await;
+            Ok::<String, Box<dyn Error + Sync + Send>>(
+                path.into_os_string()
+                    .into_string()
+                    .map_err(|_| KdeConnectError::OsStringConversionError)?,
+            )
+        }
+        .await;
+
+        match ret {
+            Ok(path) => {
+                // this should never fail
+                call_callback_no_ret!(open_file, path.try_into().unwrap());
+            }
+            Err(err) => {
+                error!("failed to save file from share: {:?}", err);
+            }
+        }
+    }
+
+    async fn handle_url_share(&mut self, url: String) {
+        // this should never fail
+        call_callback_no_ret!(open_url, url.try_into().unwrap());
+    }
+
+    async fn handle_text_share(&mut self, text: String) {
+        // this should never fail
+        call_callback_no_ret!(open_text, text.try_into().unwrap());
     }
 
     async fn handle_pairing_request(&mut self) -> bool {
@@ -307,7 +376,7 @@ pub struct KConnectVolumeStream {
     pub enabled: bool,
 
     pub muted: bool,
-    
+
     pub has_max_volume: bool,
     pub max_volume: i32,
 

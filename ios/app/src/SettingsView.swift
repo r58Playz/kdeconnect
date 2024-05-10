@@ -1,5 +1,4 @@
 import SwiftUI
-import libroot
 
 extension String: Identifiable {
     public typealias ID = Int
@@ -18,21 +17,22 @@ class SettingsViewModel: ObservableObject {
     }
 
     func loadSettings() throws {
-        name = try String(contentsOf: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/name")), encoding: .utf8)
-        type = try DeviceType.fromString(try String(contentsOf: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/type")), encoding: .utf8))
-        trustedNetworks = try String(contentsOf: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/trusted")), encoding: .utf8)
+        name = try String(contentsOf: URL(fileURLWithPath: "/var/mobile/kdeconnect/name"), encoding: .utf8)
+        type = try DeviceType.fromString(try String(contentsOf: URL(fileURLWithPath: "/var/mobile/kdeconnect/type"), encoding: .utf8))
+        trustedNetworks = try String(contentsOf: URL(fileURLWithPath: "/var/mobile/kdeconnect/trusted"), encoding: .utf8)
     }
 
     func saveSettings() throws {
-        try name.write(to: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/name")), atomically: true, encoding: .utf8) 
-        try type.toString().lowercased().write(to: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/type")), atomically: true, encoding: .utf8) 
-        try trustedNetworks.write(to: URL(fileURLWithPath: jbRootPath("/var/mobile/kdeconnect/trusted")), atomically: true, encoding: .utf8) 
-        sendExit()
+        try name.write(to: URL(fileURLWithPath: "/var/mobile/kdeconnect/name"), atomically: true, encoding: .utf8) 
+        try type.toString().lowercased().write(to: URL(fileURLWithPath: "/var/mobile/kdeconnect/type"), atomically: true, encoding: .utf8) 
+        try trustedNetworks.write(to: URL(fileURLWithPath: "/var/mobile/kdeconnect/trusted"), atomically: true, encoding: .utf8) 
     }
 }
 
 struct SettingsView: View {
     @ObservedObject var state: SettingsViewModel = SettingsViewModel() 
+    var exit: () -> Void 
+
     var body: some View {
         List {
             HStack {
@@ -67,6 +67,7 @@ struct SettingsView: View {
                 Button("Save") {
                     do {
                         try state.saveSettings()
+                        exit()
                     } catch {
                         UIApplication.shared.alert(body: error.localizedDescription)
                     }

@@ -77,6 +77,7 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 		[messagingCenter registerForMessageName:@"stop_presenter" target:self selector:@selector(sendPresenterStop:userInfo:)];
 		[messagingCenter registerForMessageName:@"get_volume" target:self selector:@selector(requestVolume:userInfo:)];
 		[messagingCenter registerForMessageName:@"send_volume" target:self selector:@selector(sendVolume:userInfo:)];
+		[messagingCenter registerForMessageName:@"share_files" target:self selector:@selector(shareFiles:userInfo:)];
 		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
@@ -173,6 +174,31 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
   KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
   if (device) {
     kdeconnect_device_send_volume_update(device, [streamName UTF8String], [enabled boolValue], [muted boolValue], [volume intValue]);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)shareFiles:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  NSArray *files = (NSArray*)[userInfo objectForKey:@"files"];
+  NSNumber *open = (NSNumber*)[userInfo objectForKey:@"open"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device && files.count) {
+    if (files.count == 1) {
+      kdeconnect_device_share_file(device, ((NSString*)files.firstObject).UTF8String, [open boolValue]);
+    } else {
+      int cnt = files.count;
+      char** filesArr = calloc(cnt, sizeof(char*));
+
+      for (int i = 0; i < cnt; i++) {
+        filesArr[i] = (char*)[[files objectAtIndex:i] UTF8String];
+      }
+
+      slice_ref_char_const_ptr_t arr = { .ptr = (char const * const *)filesArr, .len = cnt };
+
+      kdeconnect_device_share_files(device, arr, [open boolValue]);
+
+      free(filesArr);
+    }
     kdeconnect_free_device(device);
   }
 }

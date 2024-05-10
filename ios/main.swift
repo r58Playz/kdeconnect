@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import libroot
 
 var trollstore = false
@@ -14,7 +15,25 @@ if (CommandLine.argc == 2 && CommandLine.arguments[1] == "--trollstore") {
 
 var devicetype = K_CONNECT_FFI_DEVICE_TYPE_PHONE
 
-var devicetypestr = try String(contentsOfFile: jbRootPath("/var/mobile/kdeconnect/type"))
+func directoryExistsAtPath(_ path: String) -> Bool {
+    var isDirectory : ObjCBool = true
+    let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+    return exists && isDirectory.boolValue
+}
+
+if !directoryExistsAtPath("/var/mobile/kdeconnect") {
+    try FileManager.default.createDirectory(atPath: "/var/mobile/kdeconnect", withIntermediateDirectories: false)
+}
+
+if !FileManager.default.fileExists(atPath: "/var/mobile/kdeconnect/type") {
+    try "phone".write(toFile: "/var/mobile/kdeconnect/type", atomically: true, encoding: .utf8)
+}
+
+if !FileManager.default.fileExists(atPath: "/var/mobile/kdeconnect/name") {
+    try UIDevice.current.name.write(toFile: "/var/mobile/kdeconnect/name", atomically: true, encoding: .utf8)
+}
+
+var devicetypestr = try String(contentsOfFile: "/var/mobile/kdeconnect/type")
 
 switch devicetypestr {
     case "phone":
@@ -37,7 +56,7 @@ switch devicetypestr {
         exit(1)
 }
 
-var name = try String(contentsOfFile: jbRootPath("/var/mobile/kdeconnect/name"))
+var name = try String(contentsOfFile: "/var/mobile/kdeconnect/name")
 
 // FIXME: We need to move more stuff over to Swift!
 objc_main(name, KConnectFfiDeviceType_t(devicetype.rawValue), trollstore)

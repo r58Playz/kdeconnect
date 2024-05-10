@@ -12,5 +12,12 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>JetsamProperties</key>
+    <dict>
+        <key>JetsamMemoryLimit</key>
+        <integer>20</integer>
+        <key>JetsamPriority</key>
+        <integer>10</integer>
+    </dict>
 </dict>
 </plist>

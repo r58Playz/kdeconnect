@@ -131,15 +131,11 @@ struct ContentView: View {
     init() {
         self.server = KConnectObjcServer.new(withSwift: KConnectSwiftServer(view: self));
         createMessageCenter()
-        let proc = sysctl_ps() as! [NSDictionary]
-        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
-        if kdeconnectd != nil {
-            do {
-                try self.refreshConnectedDevices()
-                try self.refreshPairedDevices()
-            } catch {
-                // ignore
-            }
+        do {
+            try self.refreshConnectedDevices()
+            try self.refreshPairedDevices()
+        } catch {
+            // ignore
         }
     }
 
@@ -231,17 +227,19 @@ struct ContentView: View {
     }
 
     func refreshDevicesViews() {
-        let proc = sysctl_ps() as! [NSDictionary]
-        let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
-        if kdeconnectd != nil {
-            do {
-                rebroadcast()
-                try self.refreshConnectedDevices()
-                try self.refreshPairedDevices()
-            } catch {
-                UIApplication.shared.alert(body: error.localizedDescription)
-            }
+        do {
+            rebroadcast()
+            try self.refreshConnectedDevices()
+            try self.refreshPairedDevices()
+        } catch {
+            UIApplication.shared.alert(body: error.localizedDescription)
         }
+    }
+
+    func exitDaemon() {
+        sendExit()
+        self.data.connected = []
+        self.data.paired = []
     }
 
 	var body: some View {
@@ -294,33 +292,29 @@ struct ContentView: View {
                     }
                     Section(header: Text("Tools")) {
                         NavigationLink("Settings") {
-                            SettingsView()
+                            SettingsView(exit: { exitDaemon() })
                         }
                         if let resourceURL = Bundle.main.resourceURL,
                             FileManager().fileExists(atPath:  resourceURL.deletingLastPathComponent().appendingPathComponent("_TrollStore").path) {
                             Button("Start daemon") {
-                                let proc = sysctl_ps() as! [NSDictionary]
-                                let kdeconnectd = proc.first { $0.value(forKey: "proc_name") as! String == "kdeconnectd" }
-                                if kdeconnectd == nil {
-                                    let bundlePath = Bundle.main.bundlePath
-                                    let daemonPath = "\(bundlePath)/kdeconnectd"
-                                    if !FileManager.default.fileExists(atPath: daemonPath) {
-                                        UIApplication.shared.alert(body: "Daemon not found")
-                                        return
-                                    }
-                                    let ret = spawnRoot(daemonPath, [])
-                                    if ret != 0 {
-                                        UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
-                                        return
-                                    }
+                                let bundlePath = Bundle.main.bundlePath
+                                let daemonPath = "\(bundlePath)/kdeconnectd"
+                                if !FileManager.default.fileExists(atPath: daemonPath) {
+                                    UIApplication.shared.alert(body: "Daemon not found")
+                                    return
+                                }
+                                let ret = spawnRoot(daemonPath, [])
+                                if ret != 0 {
+                                    UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
+                                    return
                                 }
                             }
                             Button("Kill daemon") {
-                                sendExit()
+                                exitDaemon()
                             }
                         } else {
                             Button("Restart daemon") {
-                                sendExit()
+                                exitDaemon()
                             }
                         }
                     }

@@ -72,6 +72,8 @@ pub enum KdeConnectError {
     OsStringConversionError,
     #[error("Failed to find port for payload transfer")]
     NoPayloadTransferPortFound,
+    #[error("No filename")]
+    NoFileName,
     #[error("Other")]
     Other,
 
@@ -227,6 +229,7 @@ impl KdeConnect {
                 Presenter::TYPE.to_string(),
                 SystemVolume::TYPE.to_string(),
                 SystemVolumeRequest::TYPE.to_string(),
+                ShareRequest::TYPE.to_string(),
             ],
             outgoing_capabilities: vec![
                 Ping::TYPE.to_string(),
@@ -311,6 +314,7 @@ impl KdeConnect {
                         stream.into(),
                         self.connected_clients.clone(),
                         self.server_tls_config.clone(),
+                        self.client_tls_config.clone(),
                     )
                     .await?;
 
@@ -374,6 +378,7 @@ impl KdeConnect {
                         stream.into(),
                         self.connected_clients.clone(),
                         self.server_tls_config.clone(),
+                        self.client_tls_config.clone(),
                     )
                     .await?;
 

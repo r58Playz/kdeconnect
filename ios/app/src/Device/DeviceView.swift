@@ -22,6 +22,9 @@ struct ConnectedDeviceView: View {
                 NavigationLink("Volume controls") {
                     VolumeView(device: device, refresh: { refresh() })
                 }
+                NavigationLink("Share") {
+                    ShareView(device: device)
+                }
             }
         }
     }

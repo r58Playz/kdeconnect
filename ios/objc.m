@@ -23,9 +23,13 @@
 #import <AVFAudio/AVAudioPlayer.h>
 #import <AppSupport/CPDistributedMessagingCenter.h>
 #import <unistd.h>
+#import <MobileCoreServices/LSApplicationWorkspace.h>
+#import <MobileCoreServices/LSApplicationProxy.h>
+#import <FrontBoardServices/FBSSystemService.h>
 
 bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
+NSString *DOCS_PATH;
 
 NSMutableArray *TRUSTED_NETWORKS;
 NSString *CURRENT_CLIPBOARD = @"";
@@ -91,6 +95,13 @@ bool getBatteryInfo(BatteryInfo *info) {
   }
 
   return false;
+}
+
+extern NSString* SBSCopyBundlePathForDisplayIdentifier(NSString* bundleId);
+
+NSString *idToContainer(char *bundle)
+{
+  return [LSApplicationProxy applicationProxyForIdentifier:[NSString stringWithUTF8String:bundle]].dataContainerURL.absoluteString;
 }
 
 void powerSourceCallback(void *context) {
@@ -268,9 +279,27 @@ void volume_change_callback(int vol) {
   [volumeClient setVolume:newVol withNotificationDelay:0.0f];
 }
 
+void open_file_callback(char *path) {
+  NSLog(@"file saved path %s", path);
+  NSURL *url = [NSURL URLWithString:[@"shareddocuments://" stringByAppendingString:[NSString stringWithUTF8String:path]]];
+  [[LSApplicationWorkspace defaultWorkspace] openSensitiveURL:url withOptions:@{ FBSOpenApplicationOptionKeyUnlockDevice: @YES }];
+}
+
+void open_url_callback(char *url) {
+  NSURL *urlNS = [[[NSURLComponents alloc] initWithString:[NSString stringWithUTF8String:url]] URL];
+  NSLog(@"opening url %s %@", url, urlNS);
+  [[LSApplicationWorkspace defaultWorkspace] openSensitiveURL:urlNS withOptions:@{ FBSOpenApplicationOptionKeyUnlockDevice: @YES }];
+}
+
+void open_text_callback(char *text) {
+  NSString *textNS = [NSString stringWithUTF8String:text];
+  UIPasteboard.generalPasteboard.string = textNS;
+  CURRENT_CLIPBOARD = textNS;
+}
+
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
   @autoreleasepool {
-    KDECONNECT_DATA_PATH = ROOT_PATH_NS(@"/var/mobile/kdeconnect");
+    KDECONNECT_DATA_PATH = @"/var/mobile/kdeconnect";
     NSString *trustedPath = [KDECONNECT_DATA_PATH stringByAppendingString:@"/trusted"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:trustedPath]) {
       [[NSFileManager defaultManager] createFileAtPath:trustedPath contents:[NSData data] attributes:nil];
@@ -278,6 +307,8 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     TRUSTED_NETWORKS = [[[NSString stringWithContentsOfFile:trustedPath encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] mutableCopy];
     [TRUSTED_NETWORKS removeObject:@""];
     NSLog(@"trustedNetworks: %@", TRUSTED_NETWORKS);
+    DOCS_PATH = [[idToContainer("dev.r58playz.kdeconnectjb") stringByReplacingOccurrencesOfString:@"file://" withString:@""] stringByAppendingString:@"Documents/"];
+    NSLog(@"saved files path: %@", DOCS_PATH);
 
     wifiManager = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
     CFArrayRef devices = WiFiManagerClientCopyDevices(wifiManager);
@@ -372,13 +403,17 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
     kdeconnect_register_connectivity_callback(connectivity_callback);
     kdeconnect_register_volume_change_callback(volume_change_callback);
     kdeconnect_register_device_volume_callback(device_volume_callback);
+    kdeconnect_register_open_file_callback(open_file_callback);
+    kdeconnect_register_open_url_callback(open_url_callback);
+    kdeconnect_register_open_text_callback(open_text_callback);
 
     NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(
         (char*)deviceId.UTF8String,
         deviceName,
         deviceType,
-        (char*)KDECONNECT_DATA_PATH.UTF8String
+        (char*)KDECONNECT_DATA_PATH.UTF8String,
+        (char*)DOCS_PATH.UTF8String
       );
       NSLog(@"Ended OK: %d\n", res);
       exit(res);

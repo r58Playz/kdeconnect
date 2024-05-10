@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     error::Error,
     io,
+    path::PathBuf,
     sync::{Arc, OnceLock},
 };
 
@@ -33,7 +34,6 @@ use safer_ffi::{boxed::Box_, ffi_export, prelude::*};
 #[cfg(target_os = "ios")]
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::{
-    fs::File,
     runtime::{Builder, Runtime},
     sync::Mutex,
 };
@@ -87,6 +87,9 @@ struct KConnectCallbacks {
     pub connectivity_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub volume_change_requested: Option<Arc<dyn Fn(i32) + Sync + Send>>,
     pub volume_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub open_file: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub open_url: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub open_text: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
 }
 
 impl KConnectCallbacks {
@@ -105,6 +108,9 @@ impl KConnectCallbacks {
             connectivity_changed: None,
             volume_change_requested: None,
             volume_changed: None,
+            open_file: None,
+            open_url: None,
+            open_text: None,
         }
     }
 }
@@ -241,6 +247,27 @@ callback!(
     x
 );
 
+callback!(
+    kdeconnect_register_open_file_callback,
+    extern "C" fn(char_p::Box) -> (),
+    open_file,
+    x
+);
+
+callback!(
+    kdeconnect_register_open_url_callback,
+    extern "C" fn(char_p::Box) -> (),
+    open_url,
+    x
+);
+
+callback!(
+    kdeconnect_register_open_text_callback,
+    extern "C" fn(char_p::Box) -> (),
+    open_text,
+    x
+);
+
 #[ffi_export]
 pub extern "C" fn kdeconnect_init() -> bool {
     #[cfg(target_os = "ios")]
@@ -267,7 +294,9 @@ pub extern "C" fn kdeconnect_start(
     device_name: char_p::Ref<'_>,
     device_type: KConnectFfiDeviceType,
     config_path: char_p::Ref<'_>,
+    documents_path: char_p::Ref<'_>,
 ) -> bool {
+    let documents_path = PathBuf::from(documents_path.to_string());
     if let Ok(rt) = build_runtime!() {
         let ret = rt.block_on(async move {
             if STATE.lock().await.is_some() {
@@ -316,31 +345,17 @@ pub extern "C" fn kdeconnect_start(
                 let config = dev.config.clone();
 
                 #[allow(clippy::redundant_closure)]
-                let handler =
-                    Box::new(KConnectHandler::new(state.clone(), dev.config.clone(), key));
+                let handler = Box::new(KConnectHandler::new(
+                    state.clone(),
+                    dev.config.clone(),
+                    key,
+                    documents_path.clone(),
+                ));
 
                 // this should never fail
                 let id = dev.config.id.clone().try_into().unwrap();
 
                 tokio::spawn(async move { dev.task(handler).await });
-
-                info!(
-                    "file sharing ret {:?}",
-                    async {
-                        let file = File::open("/var/jb/var/mobile/kdeconnect/trusted").await?;
-
-                        tokio::spawn(
-                            client
-                                .share_file(
-                                    DeviceFile::try_from_tokio(file, "trusted".to_string()).await?,
-                                    true,
-                                )
-                                .await?,
-                        );
-                        Ok::<(), KdeConnectError>(())
-                    }
-                    .await
-                );
 
                 // STATE will always be Some
                 STATE
@@ -820,6 +835,75 @@ pub extern "C" fn kdeconnect_device_send_volume_update(
                 .client
                 .send_volume_request(name, Some(enabled), Some(muted), Some(volume))
                 .await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_share_text(
+    device: &KConnectFfiDevice,
+    text: char_p::Ref<'_>,
+) -> bool {
+    let text = text.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.share_text(text).await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_share_url(
+    device: &KConnectFfiDevice,
+    url: char_p::Ref<'_>,
+) -> bool {
+    let url = url.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.share_url(url).await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_share_file(
+    device: &KConnectFfiDevice,
+    path: char_p::Ref<'_>,
+    open: bool,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .client
+                .share_file(DeviceFile::open(path.to_str()).await?, open)
+                .await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_share_files(
+    device: &KConnectFfiDevice,
+    paths: c_slice::Ref<'_, char_p::Ref<'_>>,
+    open: bool,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let slice = paths.as_slice();
+            let mut paths = Vec::with_capacity(slice.len());
+            for path in slice {
+                paths.push(DeviceFile::open(path.to_str()).await?);
+            }
+            device.state.client.share_files(paths, open).await
         })
         .is_ok()
     } else {

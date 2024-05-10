@@ -1,6 +1,9 @@
 use std::{
     future::Future,
+    net::IpAddr,
     os::unix::fs::MetadataExt,
+    path::Path,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -21,7 +24,10 @@ use tokio::{
     sync::{mpsc, oneshot, Mutex},
     time::timeout,
 };
-use tokio_rustls::{rustls::ServerConfig, TlsStream};
+use tokio_rustls::{
+    rustls::{ClientConfig, ServerConfig},
+    TlsStream,
+};
 
 use crate::{
     config::ConfigProvider,
@@ -29,10 +35,10 @@ use crate::{
     packets::{
         Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
         ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet,
-        PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter, ShareRequest, SystemVolume,
-        SystemVolumeRequest, SystemVolumeStream,
+        PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter, ShareRequest,
+        ShareRequestUpdate, SystemVolume, SystemVolumeRequest, SystemVolumeStream,
     },
-    util::{create_payload, get_public_key, get_time_ms},
+    util::{create_payload, get_payload, get_public_key, get_time_ms},
     KdeConnectError, Result,
 };
 
@@ -55,6 +61,7 @@ pub(crate) async fn create_device(
     stream: TlsStream<BufReader<TcpStream>>,
     connected_clients: Arc<Mutex<Vec<String>>>,
     server_config: Arc<ServerConfig>,
+    client_config: Arc<ClientConfig>,
 ) -> Result<(Device, DeviceClient)> {
     let device_config = config_provider
         .retrieve_device_config(&identity.device_id)
@@ -76,6 +83,7 @@ pub(crate) async fn create_device(
             client_rx,
             initiated_pair.clone(),
             pair_event.clone(),
+            client_config,
         )
         .await?,
         DeviceClient::new(client_tx, initiated_pair, pair_event, server_config),
@@ -87,11 +95,14 @@ pub struct Device {
     config_provider: Arc<dyn ConfigProvider + Sync + Send>,
     connected_clients: Arc<Mutex<Vec<String>>>,
 
+    client_config: Arc<ClientConfig>,
+
     stream_r: Lines<BufReader<ReadHalf<TlsStream<BufReader<TcpStream>>>>>,
     stream_w: LockedDeviceWrite,
     stream_cert: Vec<u8>,
 
     client_r: mpsc::UnboundedReceiver<DeviceAction>,
+    ip: IpAddr,
 
     initiated_pair: Arc<AtomicBool>,
     pair_event: Arc<Event>,
@@ -139,6 +150,7 @@ impl Device {
         client_r: mpsc::UnboundedReceiver<DeviceAction>,
         initiated_pair: Arc<AtomicBool>,
         pair_event: Arc<Event>,
+        client_config: Arc<ClientConfig>,
     ) -> Result<Self> {
         let cert = conf.and_then(|x| x.certificate);
 
@@ -148,6 +160,8 @@ impl Device {
             .peer_certificates()
             .ok_or(KdeConnectError::NoPeerCerts)?[0]
             .to_vec();
+
+        let ip = stream.get_ref().0.get_ref().peer_addr()?.ip();
 
         let (r, w) = split(stream);
 
@@ -162,11 +176,14 @@ impl Device {
             config_provider,
             connected_clients,
 
+            client_config,
+
             stream_r: BufReader::new(r).lines(),
             stream_w: LockedDeviceWrite::new(w),
             stream_cert,
 
             client_r,
+            ip,
 
             initiated_pair,
             pair_event,
@@ -369,6 +386,33 @@ impl Device {
                                 handler.handle_system_volume_request(request).await;
                             }
                         }
+                        ShareRequestUpdate::TYPE => {
+                            let update: ShareRequestUpdate = json::from_value(packet.body)?;
+                            handler.handle_multi_file_share(update).await;
+                        }
+                        ShareRequest::TYPE => {
+                            let request: ShareRequest = json::from_value(packet.body)?;
+                            if let Some(transfer_info) = packet.payload_transfer_info
+                                && let Some(size) = packet.payload_size
+                            {
+                                handler
+                                    .handle_file_share(
+                                        request,
+                                        size,
+                                        get_payload(
+                                            self.ip,
+                                            transfer_info,
+                                            self.client_config.clone(),
+                                        )
+                                        .await?,
+                                    )
+                                    .await;
+                            } else if let Some(url) = request.url {
+                                handler.handle_url_share(url).await;
+                            } else if let Some(text) = request.text {
+                                handler.handle_text_share(text).await;
+                            }
+                        }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
                             packet.packet_type, packet.body
@@ -425,7 +469,7 @@ impl DeviceClient {
         client_w: mpsc::UnboundedSender<DeviceAction>,
         initiated_pair: Arc<AtomicBool>,
         pair_event: Arc<Event>,
-        server_config: Arc<ServerConfig>
+        server_config: Arc<ServerConfig>,
     ) -> Self {
         Self {
             client_w,
@@ -595,11 +639,13 @@ impl DeviceClient {
         self.send_packet(make_packet_str!(packet)?).await
     }
 
-    pub async fn share_file(
+    async fn share_file_internal(
         &self,
         file: DeviceFile<impl AsyncRead + Sync + Send + Unpin>,
         open: bool,
-    ) -> Result<impl Future<Output = ()> + Sync + Send> {
+        number_of_files: Option<i32>,
+        total_payload_size: Option<i64>,
+    ) -> Result<()> {
         let (port, fut) = create_payload(file.buf, self.server_config.clone()).await?;
         let packet = ShareRequest {
             text: None,
@@ -608,12 +654,54 @@ impl DeviceClient {
             creation_time: file.creation_time,
             last_modified: file.last_modified,
             open: Some(open),
-            number_of_files: Some(1),
-            total_payload_size: None,
+            number_of_files,
+            total_payload_size,
         };
         self.send_packet(make_packet_str_payload!(packet, file.size, port)?)
             .await?;
-        Ok(fut)
+        fut.await;
+        Ok(())
+    }
+
+    pub async fn share_file(
+        &self,
+        file: DeviceFile<impl AsyncRead + Sync + Send + Unpin>,
+        open: bool,
+    ) -> Result<()> {
+        self.share_file_internal(file, open, None, None).await
+    }
+
+    pub async fn share_files_manual<'a>(
+        &'a self,
+        files: Vec<DeviceFile<impl AsyncRead + Sync + Send + Unpin + 'a>>,
+        open: bool,
+    ) -> Result<Vec<impl Future<Output = Result<()>> + Sync + Send + 'a>> {
+        let mut total_size: i64 = files.iter().map(|x| x.size).sum();
+        let mut file_cnt = files.len() as i32;
+        let multi_packet = ShareRequestUpdate {
+            number_of_files: Some(file_cnt),
+            total_payload_size: Some(total_size),
+        };
+        self.send_packet(make_packet_str!(multi_packet)?).await?;
+        let mut futs = Vec::with_capacity(files.len());
+        for file in files {
+            let file_size = file.size;
+            futs.push(self.share_file_internal(file, open, Some(file_cnt), Some(total_size)));
+            file_cnt -= 1;
+            total_size -= file_size;
+        }
+        Ok(futs)
+    }
+
+    pub async fn share_files(
+        &self,
+        files: Vec<DeviceFile<impl AsyncRead + Sync + Send + Unpin>>,
+        open: bool,
+    ) -> Result<()> {
+        for fut in self.share_files_manual(files, open).await? {
+            fut.await?;
+        }
+        Ok(())
     }
 }
 
@@ -628,6 +716,15 @@ pub trait DeviceHandler {
     async fn handle_presenter(&mut self, packet: Presenter);
     async fn handle_system_volume(&mut self, packet: SystemVolume);
     async fn handle_system_volume_request(&mut self, packet: SystemVolumeRequest);
+    async fn handle_multi_file_share(&mut self, packet: ShareRequestUpdate);
+    async fn handle_file_share(
+        &mut self,
+        packet: ShareRequest,
+        size: i64,
+        data: Pin<Box<dyn AsyncRead + Sync + Send>>,
+    );
+    async fn handle_url_share(&mut self, url: String);
+    async fn handle_text_share(&mut self, text: String);
 
     async fn handle_pairing_request(&mut self) -> bool;
 
@@ -648,7 +745,7 @@ pub struct DeviceFile<S: AsyncRead + Sync + Send + Unpin> {
 }
 
 impl DeviceFile<File> {
-    pub async fn try_from_tokio(file: File, name: String) -> std::io::Result<Self> {
+    pub async fn try_from_tokio(file: File, name: String) -> Result<Self> {
         file.sync_all().await?;
         let metadata = file.metadata().await?;
         Ok(DeviceFile {
@@ -670,5 +767,18 @@ impl DeviceFile<File> {
                     .as_millis(),
             ),
         })
+    }
+
+    pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path: &Path = path.as_ref();
+        Self::try_from_tokio(
+            File::open(path).await?,
+            path.file_name()
+                .ok_or(KdeConnectError::NoFileName)?
+                .to_os_string()
+                .into_string()
+                .map_err(|_| KdeConnectError::OsStringConversionError)?,
+        )
+        .await
     }
 }

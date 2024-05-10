@@ -1,6 +1,7 @@
 use std::{
     future::Future,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -10,7 +11,7 @@ use rcgen::{Certificate, CertificateParams, DnType, KeyPair};
 use time::OffsetDateTime;
 use tokio::{
     io::{AsyncRead, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
 };
 use tokio_rustls::{
     rustls::{
@@ -18,16 +19,14 @@ use tokio_rustls::{
         client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
         crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider},
         pki_types::{CertificateDer, ServerName, UnixTime},
-        server::{
-            danger::{ClientCertVerified, ClientCertVerifier},
-        },
-        DigitallySignedStruct, ServerConfig,
+        server::danger::{ClientCertVerified, ClientCertVerifier},
+        ClientConfig, DigitallySignedStruct, ServerConfig,
     },
-    TlsAcceptor,
+    TlsAcceptor, TlsConnector,
 };
 use x509_parser::{certificate::X509Certificate, der_parser::asn1_rs::FromDer};
 
-use crate::KdeConnectError;
+use crate::{packets::PacketPayloadTransferInfo, KdeConnectError};
 
 pub(crate) fn generate_server_cert(
     keypair: &KeyPair,
@@ -192,4 +191,16 @@ pub(crate) async fn create_payload(
     } else {
         Err(KdeConnectError::NoPayloadTransferPortFound)
     }
+}
+
+pub(crate) async fn get_payload(
+    ip: IpAddr,
+    transfer_info: PacketPayloadTransferInfo,
+    client_config: Arc<ClientConfig>,
+) -> Result<Pin<Box<dyn AsyncRead + Sync + Send>>, KdeConnectError> {
+    let stream = TcpStream::connect(SocketAddr::new(ip, transfer_info.port)).await?;
+    let tls = TlsConnector::from(client_config)
+        .connect("kdeconnectjb".try_into()?, stream)
+        .await?;
+    Ok(Box::pin(tls))
 }
