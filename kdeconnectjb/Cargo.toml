@@ -12,12 +12,15 @@ required-features = ["headers"]
 
 [dependencies]
 async-trait = "0.1.79"
+base64 = "0.22.1"
 kdeconnect = { version = "0.1.0", path = "../kdeconnect" }
 log = { version = "0.4.21", features = ["std"] }
+reqwest = { version = "0.12.4", default-features = false, features = ["rustls-tls", "stream"] }
 safer-ffi = "0.1.6"
 simplelog = "0.12.2"
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = "0.1.15"
+tokio-util = { version = "0.7.11", features = ["io-util"] }
 
 [features]
 headers = ["safer-ffi/headers"]

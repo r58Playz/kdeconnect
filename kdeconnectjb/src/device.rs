@@ -1,11 +1,16 @@
-use std::{error::Error, ffi::OsStr, path::PathBuf, pin::Pin, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap, error::Error, ffi::OsStr, path::PathBuf, pin::Pin, sync::Arc,
+    time::SystemTime,
+};
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
     packets::{
-        Battery, ConnectivityReport, DeviceType, Ping, Presenter, ShareRequest, ShareRequestUpdate,
-        SystemVolume, SystemVolumeRequest, SystemVolumeStream,
+        Battery, ConnectivityReport, DeviceType, MprisPlayer, MprisRequestAction, Ping, Presenter,
+        ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
+        SystemVolumeStream,
     },
     KdeConnectError,
 };
@@ -16,6 +21,8 @@ use tokio::{
     io::{AsyncRead, AsyncWriteExt},
     sync::Mutex,
 };
+use tokio_stream::StreamExt;
+use tokio_util::io::StreamReader;
 
 use crate::{call_callback, call_callback_no_ret, STATE};
 
@@ -25,6 +32,7 @@ pub struct KConnectDeviceState {
     pub clipboard: Option<String>,
     pub connectivity: Option<ConnectivityReport>,
     pub systemvolume: Option<Vec<SystemVolumeStream>>,
+    pub players: HashMap<String, (MprisPlayer, Option<String>)>,
 }
 
 pub struct KConnectDevice {
@@ -35,6 +43,7 @@ pub struct KConnectDevice {
 
 pub struct KConnectHandler {
     state: Arc<Mutex<KConnectDeviceState>>,
+    client: Arc<DeviceClient>,
     config: DeviceConfig,
     id: char_p::Box,
     verification_key: char_p::Box,
@@ -44,6 +53,7 @@ pub struct KConnectHandler {
 impl KConnectHandler {
     pub fn new(
         state: Arc<Mutex<KConnectDeviceState>>,
+        client: Arc<DeviceClient>,
         mut config: DeviceConfig,
         verification_key: String,
         documents_path: PathBuf,
@@ -52,6 +62,7 @@ impl KConnectHandler {
         config.certificate.take();
         Self {
             state,
+            client,
             // this should never fail
             id: config.id.clone().try_into().unwrap(),
             config,
@@ -131,23 +142,31 @@ impl DeviceHandler for KConnectHandler {
 
     async fn handle_system_volume(&mut self, packet: SystemVolume) {
         info!("system volume: {:?}", packet);
-        if let Some(streams) = packet.sink_list {
-            self.state.lock().await.systemvolume.replace(streams);
-        } else if let Some(name) = packet.name {
-            let mut state = self.state.lock().await;
-            if let Some(stream) = state
-                .systemvolume
-                .as_mut()
-                .and_then(|x| x.iter_mut().find(|x| x.name == name))
-            {
-                if let Some(enabled) = packet.enabled {
-                    stream.enabled = Some(enabled);
-                }
-                if let Some(muted) = packet.muted {
-                    stream.muted = muted;
-                }
-                if let Some(volume) = packet.volume {
-                    stream.volume = volume;
+        match packet {
+            SystemVolume::List { sink_list } => {
+                self.state.lock().await.systemvolume.replace(sink_list);
+            }
+            SystemVolume::Update {
+                name,
+                enabled,
+                muted,
+                volume,
+            } => {
+                let mut state = self.state.lock().await;
+                if let Some(stream) = state
+                    .systemvolume
+                    .as_mut()
+                    .and_then(|x| x.iter_mut().find(|x| x.name == name))
+                {
+                    if let Some(enabled) = enabled {
+                        stream.enabled = Some(enabled);
+                    }
+                    if let Some(muted) = muted {
+                        stream.muted = muted;
+                    }
+                    if let Some(volume) = volume {
+                        stream.volume = volume;
+                    }
                 }
             }
         }
@@ -178,7 +197,7 @@ impl DeviceHandler for KConnectHandler {
 
     async fn handle_file_share(
         &mut self,
-        packet: ShareRequest,
+        packet: ShareRequestFile,
         _size: i64,
         mut data: Pin<Box<dyn AsyncRead + Sync + Send>>,
     ) {
@@ -187,9 +206,7 @@ impl DeviceHandler for KConnectHandler {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_millis();
-            let mut path = self
-                .documents_path
-                .join(packet.filename.unwrap_or(current_time.to_string()));
+            let mut path = self.documents_path.join(packet.filename);
             if tokio::fs::try_exists(&path).await? {
                 let current_name = path
                     .file_name()
@@ -202,8 +219,8 @@ impl DeviceHandler for KConnectHandler {
             let mut file = File::create(&path).await?;
             // kdeconnect-kde is weird sometimes and closes without properly closing TLS
             let _ = tokio::io::copy(&mut data, &mut file).await;
-            let _ = file.shutdown().await;
-            let _ = file.sync_all().await;
+            file.shutdown().await?;
+            file.sync_all().await?;
             Ok::<String, Box<dyn Error + Sync + Send>>(
                 path.into_os_string()
                     .into_string()
@@ -231,6 +248,100 @@ impl DeviceHandler for KConnectHandler {
     async fn handle_text_share(&mut self, text: String) {
         // this should never fail
         call_callback_no_ret!(open_text, text.try_into().unwrap());
+    }
+
+    async fn handle_mpris_player_list(&mut self, players: Vec<String>) {
+        self.state
+            .lock()
+            .await
+            .players
+            .retain(|x, _| players.contains(x));
+
+        let client = self.client.clone();
+
+        tokio::spawn(async move {
+            for player in players {
+                let _ = client.request_mpris_info(player, None).await;
+            }
+        });
+    }
+
+    async fn handle_mpris_player_info(&mut self, player: MprisPlayer) {
+        info!("got mpris {:?}", player);
+        if let Some(art_url) = player.album_art_url.clone()
+            && art_url.starts_with("file:")
+        {
+            let client = self.client.clone();
+            let player = player.player.clone();
+            tokio::spawn(async move {
+                // request album art (kdeconnect-kde)
+                let _ = client.request_mpris_info(player, Some(art_url)).await;
+            });
+        } else if let Some(art_url) = player.album_art_url.clone() {
+            let player = player.player.clone();
+            // maybe don't block the device task
+            if let Ok(art) = reqwest::get(&art_url).await {
+                let reader =
+                    StreamReader::new(art.bytes_stream().map(|x| x.map_err(std::io::Error::other)));
+
+                self.handle_mpris_player_album_art(player, Box::pin(reader))
+                    .await;
+            }
+        }
+        self.state
+            .lock()
+            .await
+            .players
+            .insert(player.player.clone(), (player, None));
+    }
+
+    async fn handle_mpris_player_album_art(
+        &mut self,
+        player: String,
+        mut data: Pin<Box<dyn AsyncRead + Sync + Send>>,
+    ) {
+        let album_file_name =
+            URL_SAFE_NO_PAD.encode(format!("{}__{}", self.config.id, &player)) + ".png";
+        let mut path = self.documents_path.join("album_art/");
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let ret = async move {
+                if !path.is_dir() {
+                    if path.exists() {
+                        tokio::fs::remove_file(&path).await?;
+                    }
+                    tokio::fs::create_dir(&path).await?;
+                }
+                path.push(album_file_name);
+                let mut file = File::create(&path).await?;
+                // kdeconnect-kde is weird sometimes and closes without properly closing TLS
+                let _ = tokio::io::copy(&mut data, &mut file).await;
+                file.shutdown().await?;
+                file.sync_all().await?;
+                path.into_os_string()
+                    .into_string()
+                    .map_err(|_| KdeConnectError::OsStringConversionError)
+            }
+            .await;
+            match ret {
+                Ok(path) => {
+                    if let Some(player) = state.lock().await.players.get_mut(&player) {
+                        player.1.replace(path);
+                    }
+                    info!("saved album art for player {:?}", player);
+                }
+                Err(err) => {
+                    error!(
+                        "failed to save album art for player {:?}: {:?}",
+                        player, err
+                    );
+                }
+            }
+        });
+    }
+
+    async fn handle_mpris_player_action(&mut self, action: MprisRequestAction) {
+        // TODO - ignore for now
     }
 
     async fn handle_pairing_request(&mut self) -> bool {
@@ -282,6 +393,30 @@ impl DeviceHandler for KConnectHandler {
             max_volume: Some(100),
             enabled: None,
         }]
+    }
+
+    async fn get_mpris_player_list(&mut self) -> Vec<String> {
+        // STATE will always be Some here
+        STATE
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .current_player
+            .as_ref()
+            .map_or_else(Vec::new, |x| vec![x.player.clone()])
+    }
+
+    async fn get_mpris_player(&mut self, player: String) -> Option<MprisPlayer> {
+        let locked = STATE.lock().await;
+        // STATE will always be Some here
+        if let Some(current_player) = locked.as_ref().unwrap().current_player.as_ref()
+            && current_player.player == player
+        {
+            Some(current_player.clone())
+        } else {
+            None
+        }
     }
 
     async fn handle_exit(&mut self) {

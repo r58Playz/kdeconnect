@@ -21,7 +21,7 @@ use kdeconnect::{
     device::DeviceFile,
     packets::{
         Battery, ConnectivityReport, ConnectivityReportNetworkType, ConnectivityReportSignal,
-        Presenter,
+        MprisLoopStatus, MprisPlayer, Presenter,
     },
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
@@ -51,6 +51,7 @@ struct KConnectState {
     current_clipboard: String,
     current_signals: HashMap<String, ConnectivityReportSignal>,
     current_volume: i32,
+    current_player: Option<MprisPlayer>,
     being_found: bool,
 }
 
@@ -68,6 +69,7 @@ impl KConnectState {
             current_clipboard: String::new(),
             current_signals: HashMap::new(),
             current_volume: 0,
+            current_player: None,
             being_found: false,
         }
     }
@@ -342,11 +344,13 @@ pub extern "C" fn kdeconnect_start(
                     dev.config.id, dev.config.name, dev.config.device_type
                 );
                 let state = Arc::new(Mutex::new(KConnectDeviceState::default()));
+                let client = Arc::new(client);
                 let config = dev.config.clone();
 
                 #[allow(clippy::redundant_closure)]
                 let handler = Box::new(KConnectHandler::new(
                     state.clone(),
+                    client.clone(),
                     dev.config.clone(),
                     key,
                     documents_path.clone(),
@@ -355,7 +359,9 @@ pub extern "C" fn kdeconnect_start(
                 // this should never fail
                 let id = dev.config.id.clone().try_into().unwrap();
 
-                tokio::spawn(async move { dev.task(handler).await });
+                tokio::spawn(async move {
+                    info!("handler task exited: {:?}", dev.task(handler).await);
+                });
 
                 // STATE will always be Some
                 STATE
@@ -365,7 +371,7 @@ pub extern "C" fn kdeconnect_start(
                     .unwrap()
                     .devices
                     .push(KConnectDevice {
-                        client: client.into(),
+                        client,
                         state,
                         config,
                     });
@@ -734,11 +740,7 @@ pub extern "C" fn kdeconnect_device_send_presenter(
             device
                 .state
                 .client
-                .send_presenter_update(Presenter {
-                    dx: Some(dx),
-                    dy: Some(dy),
-                    stop: None,
-                })
+                .send_presenter_update(Presenter::Move { dx, dy })
                 .await
         })
         .is_ok()
@@ -754,11 +756,7 @@ pub extern "C" fn kdeconnect_device_stop_presenter(device: &KConnectFfiDevice) -
             device
                 .state
                 .client
-                .send_presenter_update(Presenter {
-                    dx: None,
-                    dy: None,
-                    stop: Some(true),
-                })
+                .send_presenter_update(Presenter::Stop { stop: true })
                 .await
         })
         .is_ok()
@@ -936,7 +934,7 @@ pub extern "C" fn kdeconnect_on_battery_event(
             let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
             state.current_battery = battery_state;
             for device in state.devices.iter() {
-                device.client.send_battery_update(battery_state).await?;
+                let _ = device.client.send_battery_update(battery_state).await;
             }
             Ok::<(), KdeConnectError>(())
         })
@@ -957,7 +955,7 @@ pub extern "C" fn kdeconnect_on_clipboard_event(content: char_p::Ref<'_>) -> boo
             state.current_clipboard.clone_from(&content);
 
             for device in state.devices.iter() {
-                device.client.send_clipboard_update(content.clone()).await?;
+                let _ = device.client.send_clipboard_update(content.clone()).await;
             }
             Ok::<(), KdeConnectError>(())
         })
@@ -1046,12 +1044,12 @@ pub extern "C" fn kdeconnect_send_connectivity_update() -> bool {
             let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
 
             for device in state.devices.iter() {
-                device
+                let _ = device
                     .client
                     .send_connectivity_report(ConnectivityReport {
                         signal_strengths: state.current_signals.clone(),
                     })
-                    .await?;
+                    .await;
             }
             Ok::<(), KdeConnectError>(())
         })
@@ -1071,7 +1069,7 @@ pub extern "C" fn kdeconnect_set_volume(vol: i32) -> bool {
             state.current_volume = vol;
 
             for device in state.devices.iter() {
-                device
+                let _ = device
                     .client
                     .send_volume_stream_update(
                         "coreaudio".to_string(),
@@ -1079,7 +1077,86 @@ pub extern "C" fn kdeconnect_set_volume(vol: i32) -> bool {
                         Some(vol == 0),
                         Some(vol),
                     )
-                    .await?;
+                    .await;
+            }
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_remove_player() -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+            state.current_player = None;
+            for device in state.devices.iter() {
+                let _ = device.client.send_mpris_list(vec![]).await;
+            }
+            Ok::<(), KdeConnectError>(())
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_add_player(
+    title: char_p::Ref<'_>,
+    artist: char_p::Ref<'_>,
+    album: char_p::Ref<'_>,
+    is_playing: bool,
+    pos: i32,
+    len: i32,
+    album_art: char_p::Ref<'_>,
+) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let album_art = album_art.to_str();
+            let title = title.to_string();
+            let artist = artist.to_string();
+            let album = album.to_string();
+            let player = MprisPlayer {
+                player: "iPhone".to_string(),
+                title: if title.is_empty() { None } else { Some(title) },
+                artist: if artist.is_empty() {
+                    None
+                } else {
+                    Some(artist)
+                },
+                album: if album.is_empty() { None } else { Some(album) },
+                is_playing: Some(is_playing),
+                pos: Some(pos),
+                length: Some(len),
+                album_art_url: if album_art.is_empty() {
+                    None
+                } else {
+                    Some("file://".to_string() + album_art)
+                },
+
+                can_pause: Some(true),
+                can_play: Some(true),
+                can_go_next: Some(true),
+                can_go_previous: Some(true),
+                can_seek: Some(true),
+                // ios doesn't provide shuffle afaik (@bomberfish please fix)
+                shuffle: Some(false),
+                // nor does it provide repeat (@bomberfish please fix)
+                loop_status: Some(MprisLoopStatus::None),
+                volume: Some(100),
+                url: None,
+            };
+            info!("player: {:?}", player);
+            let mut locked = STATE.lock().await;
+            let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
+            state.current_player = Some(player);
+            for device in state.devices.iter() {
+                let _ = device.client.send_mpris_list(vec!["iPhone".to_string()]).await;
             }
             Ok::<(), KdeConnectError>(())
         })

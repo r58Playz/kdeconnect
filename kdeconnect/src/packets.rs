@@ -216,21 +216,26 @@ derive_type!(
 );
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-pub struct Presenter {
-    pub dx: Option<f32>,
-    pub dy: Option<f32>,
-    pub stop: Option<bool>,
+#[serde(untagged)]
+pub enum Presenter {
+    Move { dx: f32, dy: f32 },
+    Stop { stop: bool },
 }
 derive_type!(Presenter, "kdeconnect.presenter");
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SystemVolume {
-    pub sink_list: Option<Vec<SystemVolumeStream>>,
-    pub name: Option<String>,
-    pub enabled: Option<bool>,
-    pub muted: Option<bool>,
-    pub volume: Option<i32>,
+#[serde(untagged)]
+pub enum SystemVolume {
+    List {
+        #[serde(rename = "sinkList")]
+        sink_list: Vec<SystemVolumeStream>,
+    },
+    Update {
+        name: String,
+        enabled: Option<bool>,
+        muted: Option<bool>,
+        volume: Option<i32>,
+    },
 }
 derive_type!(SystemVolume, "kdeconnect.systemvolume");
 
@@ -259,16 +264,11 @@ pub struct SystemVolumeRequest {
 derive_type!(SystemVolumeRequest, "kdeconnect.systemvolume.request");
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ShareRequest {
-    pub filename: Option<String>,
-    pub creation_time: Option<u128>,
-    pub last_modified: Option<u128>,
-    pub open: Option<bool>,
-    pub number_of_files: Option<i32>,
-    pub total_payload_size: Option<i64>,
-    pub text: Option<String>,
-    pub url: Option<String>,
+#[serde(untagged, rename_all = "camelCase")]
+pub enum ShareRequest {
+    File(ShareRequestFile),
+    Text { text: String },
+    Url { url: String },
 }
 derive_type!(ShareRequest, "kdeconnect.share.request");
 
@@ -279,6 +279,123 @@ pub struct ShareRequestUpdate {
     pub total_payload_size: Option<i64>,
 }
 derive_type!(ShareRequestUpdate, "kdeconnect.share.request.update");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRequestFile {
+    pub filename: String,
+    pub creation_time: Option<u128>,
+    pub last_modified: Option<u128>,
+    pub open: Option<bool>,
+    pub number_of_files: Option<i32>,
+    pub total_payload_size: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum Mpris {
+    List {
+        #[serde(rename = "playerList")]
+        player_list: Vec<String>,
+        #[serde(rename = "supportAlbumArtPayload")]
+        supports_album_art_payload: bool,
+    },
+    TransferringArt {
+        player: String,
+        #[serde(rename = "albumArtUrl")]
+        album_art_url: String,
+        #[serde(rename = "transferringAlbumArt")]
+        transferring_album_art: bool,
+    },
+    Info(MprisPlayer),
+}
+derive_type!(Mpris, "kdeconnect.mpris");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MprisPlayer {
+    pub player: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    #[serde(rename = "isPlaying")]
+    pub is_playing: Option<bool>,
+    #[serde(rename = "canPause")]
+    pub can_pause: Option<bool>,
+    #[serde(rename = "canPlay")]
+    pub can_play: Option<bool>,
+    #[serde(rename = "canGoNext")]
+    pub can_go_next: Option<bool>,
+    #[serde(rename = "canGoPrevious")]
+    pub can_go_previous: Option<bool>,
+    #[serde(rename = "canSeek")]
+    pub can_seek: Option<bool>,
+    #[serde(rename = "loopStatus")]
+    pub loop_status: Option<MprisLoopStatus>,
+    pub shuffle: Option<bool>,
+    pub pos: Option<i32>,
+    pub length: Option<i32>,
+    pub volume: Option<i32>,
+    #[serde(rename = "albumArtUrl")]
+    pub album_art_url: Option<String>,
+    // undocumented kdeconnect-kde field
+    pub url: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum MprisLoopStatus {
+    None,
+    Track,
+    Playlist,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum MprisRequest {
+    List {
+        #[serde(rename = "requestPlayerList")]
+        request_player_list: bool,
+    },
+    PlayerRequest {
+        player: String,
+        #[serde(rename = "requestNowPlaying")]
+        request_now_playing: Option<bool>,
+        #[serde(rename = "requestVolume")]
+        request_volume: Option<bool>,
+        // set to a file:// string to get kdeconnect-kde to send (local) album art
+        #[serde(rename = "albumArtUrl")]
+        request_album_art: Option<String>,
+    },
+    Action(MprisRequestAction),
+}
+derive_type!(MprisRequest, "kdeconnect.mpris.request");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MprisRequestAction {
+    player: String,
+    // ????
+    #[serde(rename = "Seek")]
+    seek: Option<i32>,
+    #[serde(rename = "setVolume")]
+    set_volume: Option<i32>,
+    #[serde(rename = "setLoopStatus")]
+    set_loop_status: Option<MprisLoopStatus>,
+    // ??????
+    #[serde(rename = "SetPosition")]
+    set_position: Option<i32>,
+    #[serde(rename = "setShuffle")]
+    set_shuffle: Option<bool>,
+    action: Option<MprisAction>,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum MprisAction {
+    Play,
+    Pause,
+    PlayPause,
+    Stop,
+    Next,
+    Previous,
+}
 
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway
@@ -303,7 +420,9 @@ macro_rules! make_packet_payload {
             packet_type: $packet.get_type_self().to_string(),
             body: serde_json::value::to_value($packet).expect("packet was invalid"),
             payload_size: Some($payload_size),
-            payload_transfer_info: Some(PacketPayloadTransferInfo { port: $payload_port }),
+            payload_transfer_info: Some(PacketPayloadTransferInfo {
+                port: $payload_port,
+            }),
         }
     };
 }
@@ -318,6 +437,7 @@ macro_rules! make_packet_str {
 #[macro_export]
 macro_rules! make_packet_str_payload {
     ($packet:ident, $payload_size:expr, $payload_port:expr) => {
-        serde_json::to_string(&make_packet_payload!($packet, $payload_size, $payload_port)).map(|x| x + "\n")
+        serde_json::to_string(&make_packet_payload!($packet, $payload_size, $payload_port))
+            .map(|x| x + "\n")
     };
 }

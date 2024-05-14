@@ -9,6 +9,9 @@
 #import "headers/CTXPCServiceSubscriptionContext.h"
 #import "headers/MobileWiFi/MobileWiFi.h"
 #import "headers/MPVolumeController.h"
+#import "headers/MRContentItem.h"
+#import "headers/MRContentItemMetadata.h"
+#import "headers/MRArtwork.h"
 
 #import "kdeconnectjb.h"
 #import "server.h"
@@ -26,8 +29,8 @@
 #import <MobileCoreServices/LSApplicationWorkspace.h>
 #import <MobileCoreServices/LSApplicationProxy.h>
 #import <FrontBoardServices/FBSSystemService.h>
+#import <MediaRemote/MediaRemote.h>
 
-bool TROLLSTORE = false;
 NSString *KDECONNECT_DATA_PATH;
 NSString *DOCS_PATH;
 
@@ -36,7 +39,6 @@ NSString *CURRENT_CLIPBOARD = @"";
 
 float CURRENT_VOLUME = 0.0f;
 
-CPDistributedMessagingCenter *tweakMessageCenter;
 CPDistributedMessagingCenter *appMessageCenter;
 
 CoreTelephonyClient *telephonyClient;
@@ -97,8 +99,6 @@ bool getBatteryInfo(BatteryInfo *info) {
   return false;
 }
 
-extern NSString* SBSCopyBundlePathForDisplayIdentifier(NSString* bundleId);
-
 NSString *idToContainer(char *bundle)
 {
   return [LSApplicationProxy applicationProxyForIdentifier:[NSString stringWithUTF8String:bundle]].dataContainerURL.absoluteString;
@@ -114,6 +114,43 @@ void powerSourceCallback(void *context) {
   ) {
     NSLog(@"battery event failed");
   }
+}
+
+void mediaCallback() {
+  MRMediaRemoteGetNowPlayingInfo(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(CFDictionaryRef result) {
+    if (result) {
+      MRContentItem *item = [[MRContentItem alloc] initWithNowPlayingInfo:(__bridge NSDictionary *)result];
+      NSLog(@"mpris playing info: %@", item);
+      MRArtwork *artwork = item.artwork;
+      NSString *path = [DOCS_PATH stringByAppendingString:@"album_art/self.png"];
+      if (artwork) {
+        UIImage* image = [UIImage imageWithData:artwork.imageData];
+        CIImage* imageCI = [CIImage imageWithCGImage:image.CGImage];
+        NSData* pngData = [[CIContext context] PNGRepresentationOfImage:imageCI format:kCIFormatRGBA8 colorSpace:CGColorSpaceCreateWithName(kCGColorSpaceSRGB) options:@{}];
+        [pngData writeToFile:path atomically:YES];
+      } else {
+        path = @"";
+      }
+      NSString *title = item.metadata.title;
+      if (!title) title = @"";
+      NSString *artist = item.metadata.trackArtistName;
+      if (!artist) artist = @"";
+      NSString *album = item.metadata.albumName;
+      if (!album) album = @"";
+      NSLog(@"playing %@", item.nowPlayingInfo);
+      kdeconnect_add_player(
+        title.UTF8String,
+        artist.UTF8String,
+        album.UTF8String,
+        item.metadata.playbackRate > 0.0001,
+        (int)(item.metadata.calculatedPlaybackPosition * 1000),
+        (int)(item.metadata.duration * 1000),
+        path.UTF8String
+      );
+    } else {
+      kdeconnect_remove_player();
+    }
+  });
 }
 
 void initialized_callback() { 
@@ -205,8 +242,7 @@ void clipboard_callback(char *device_id, char *clipboard) {
 
 void ping_callback(char *device_id) {
   KConnectFfiDevice_t *device_by_id;
-  if (!TROLLSTORE && 
-      (device_by_id = kdeconnect_get_device_by_id(device_id))) {
+  if ((device_by_id = kdeconnect_get_device_by_id(device_id))) {
     NSString *devName = [NSString stringWithUTF8String:device_by_id->name];
     NSMutableDictionary *alert = [[NSMutableDictionary alloc] init];
     [alert addEntriesFromDictionary:@{
@@ -297,7 +333,7 @@ void open_text_callback(char *text) {
   CURRENT_CLIPBOARD = textNS;
 }
 
-int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool trollstore) {
+int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
   @autoreleasepool {
     KDECONNECT_DATA_PATH = @"/var/mobile/kdeconnect";
     NSString *trustedPath = [KDECONNECT_DATA_PATH stringByAppendingString:@"/trusted"];
@@ -326,52 +362,57 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
       }
     }
 
-    TROLLSTORE = trollstore;
-    if (trollstore) {
-      NSLog(@"Starting as TrollStore daemon");
-      NSLog(@"[Flotsam:INFO] Hammer time.");
-      pid_t pid = getpid();
-      memorystatus_priority_properties_t props = {JETSAM_PRIORITY_CRITICAL, 0};
+    NSLog(@"[Flotsam:INFO] Hammer time.");
+    pid_t pid = getpid();
+    // make it jetsamable if it's really in low memory
+    memorystatus_priority_properties_t props = {JETSAM_PRIORITY_AUDIO_AND_ACCESSORY, 0};
 
-      if (memorystatus_control(MEMORYSTATUS_CMD_SET_PRIORITY_PROPERTIES, pid, 0,
-                               &props, sizeof(props)) != 0) {
-        NSLog(@"[Flotsam:WARN] Could not set jetsam priority for process %d. "
-              @"(%d)",
-              pid, errno);
-      } else {
-        NSLog(@"[Flotsam:INFO] Set jetsam priority for process %d to %d.", pid,
-              props.priority);
-      }
-
-      if (memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, pid,
-                               -1, NULL, 0) != 0) {
-        NSLog(@"[Flotsam:WARN] Could not set jetsam high water mark on process "
-              @"%d. (%d)",
-              pid, errno);
-      } else {
-        NSLog(@"[Flotsam:INFO] Set jetsam high water mark on process %d to -1.",
-              pid);
-      }
-
-      if (memorystatus_control(MEMORYSTATUS_CMD_SET_PROCESS_IS_MANAGED, pid, 0,
-                               NULL, 0) != 0) {
-        NSLog(@"[Flotsam:WARN] Could not set process %d as unmanaged. (%d)",
-              pid, errno);
-      } else {
-        NSLog(@"[Flotsam:INFO] Set process %d as unmanaged.", pid);
-      }
-
-      if (memorystatus_control(MEMORYSTATUS_CMD_SET_PROCESS_IS_FREEZABLE, pid,
-                               0, NULL, 0) != 0) {
-        NSLog(@"[Flotsam:WARN] Could not set process %d as non-freezable. (%d)",
-              pid, errno);
-      } else {
-        NSLog(@"[Flotsam:INFO] Set process %d as non-freezable.", pid);
-      }
+    if (memorystatus_control(MEMORYSTATUS_CMD_SET_PRIORITY_PROPERTIES, pid, 0,
+                             &props, sizeof(props)) != 0) {
+      NSLog(@"[Flotsam:WARN] Could not set jetsam priority for process %d. "
+            @"(%d)",
+            pid, errno);
     } else {
-      NSLog(@"Starting as JB daemon");
-      tweakMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.springboard"];
+      NSLog(@"[Flotsam:INFO] Set jetsam priority for process %d to %d.", pid,
+            props.priority);
     }
+
+    if (memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, pid,
+                             -1, NULL, 0) != 0) {
+      NSLog(@"[Flotsam:WARN] Could not set jetsam high water mark on process "
+            @"%d. (%d)",
+            pid, errno);
+    } else {
+      NSLog(@"[Flotsam:INFO] Set jetsam high water mark on process %d to -1.",
+            pid);
+    }
+
+    if (memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT, pid,
+                             -1, NULL, 0) != 0) {
+      NSLog(@"[Flotsam:WARN] Could not set jetsam task limit on process "
+            @"%d. (%d)",
+            pid, errno);
+    } else {
+      NSLog(@"[Flotsam:INFO] Set jetsam task limit on process %d to -1.",
+            pid);
+    }
+
+    if (memorystatus_control(MEMORYSTATUS_CMD_SET_PROCESS_IS_MANAGED, pid, 0,
+                             NULL, 0) != 0) {
+      NSLog(@"[Flotsam:WARN] Could not set process %d as unmanaged. (%d)",
+            pid, errno);
+    } else {
+      NSLog(@"[Flotsam:INFO] Set process %d as unmanaged.", pid);
+    }
+
+    if (memorystatus_control(MEMORYSTATUS_CMD_SET_PROCESS_IS_FREEZABLE, pid,
+                             0, NULL, 0) != 0) {
+      NSLog(@"[Flotsam:WARN] Could not set process %d as non-freezable. (%d)",
+            pid, errno);
+    } else {
+      NSLog(@"[Flotsam:INFO] Set process %d as non-freezable.", pid);
+    }
+
     appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
 
     CoreTelephonyClientMux *telephonyClientMux = [CoreTelephonyClient sharedMultiplexer];
@@ -449,6 +490,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
         kdeconnect_add_connectivity_signal("1", radioTechnology.UTF8String, info.bars.intValue);
         NSLog(@"added connectivity signal: 1 %@ %d", radioTechnology, info.bars.intValue);
       }
+      kdeconnect_send_connectivity_update();
     });
 
     CFRunLoopTimerRef trustedNetworkLoop = CFRunLoopTimerCreateWithHandler(NULL, CFAbsoluteTimeGetCurrent(), 10.0, 0, 0, ^(CFRunLoopTimerRef timer){
@@ -467,6 +509,12 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType, bool t
         }
       }];
     });
+
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"kMRMediaRemoteNowPlayingInfoDidChangeNotification" object:nil queue:nil usingBlock:^(NSNotification *notif) {
+      mediaCallback();
+    }];
+
+    MRMediaRemoteRegisterForNowPlayingNotifications(dispatch_get_main_queue());
 
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);

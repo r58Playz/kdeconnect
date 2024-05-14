@@ -4,13 +4,9 @@ import libroot
 
 var trollstore = false
 
-if CommandLine.argc > 2 {
+if CommandLine.argc > 1 {
     print("usage: \(CommandLine.arguments[0]) [--trollstore]")
     exit(1)
-}
-
-if (CommandLine.argc == 2 && CommandLine.arguments[1] == "--trollstore") {
-    trollstore = true
 }
 
 var devicetype = K_CONNECT_FFI_DEVICE_TYPE_PHONE
@@ -59,4 +55,4 @@ switch devicetypestr {
 var name = try String(contentsOfFile: "/var/mobile/kdeconnect/name")
 
 // FIXME: We need to move more stuff over to Swift!
-objc_main(name, KConnectFfiDeviceType_t(devicetype.rawValue), trollstore)
+objc_main(name, KConnectFfiDeviceType_t(devicetype.rawValue))

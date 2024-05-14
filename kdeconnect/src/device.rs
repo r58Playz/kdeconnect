@@ -12,7 +12,7 @@ use std::{
 };
 
 use event_listener::Event;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use sha2::{Digest, Sha256};
@@ -34,9 +34,10 @@ use crate::{
     make_packet, make_packet_payload, make_packet_str, make_packet_str_payload,
     packets::{
         Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
-        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Packet,
-        PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter, ShareRequest,
-        ShareRequestUpdate, SystemVolume, SystemVolumeRequest, SystemVolumeStream,
+        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Mpris, MprisPlayer,
+        MprisRequest, MprisRequestAction, Packet, PacketPayloadTransferInfo, PacketType, Pair,
+        Ping, Presenter, ShareRequest, ShareRequestFile, ShareRequestUpdate, SystemVolume,
+        SystemVolumeRequest, SystemVolumeStream,
     },
     util::{create_payload, get_payload, get_public_key, get_time_ms},
     KdeConnectError, Result,
@@ -84,6 +85,7 @@ pub(crate) async fn create_device(
             initiated_pair.clone(),
             pair_event.clone(),
             client_config,
+            server_config.clone(),
         )
         .await?,
         DeviceClient::new(client_tx, initiated_pair, pair_event, server_config),
@@ -95,6 +97,7 @@ pub struct Device {
     config_provider: Arc<dyn ConfigProvider + Sync + Send>,
     connected_clients: Arc<Mutex<Vec<String>>>,
 
+    server_config: Arc<ServerConfig>,
     client_config: Arc<ClientConfig>,
 
     stream_r: Lines<BufReader<ReadHalf<TlsStream<BufReader<TcpStream>>>>>,
@@ -106,6 +109,8 @@ pub struct Device {
 
     initiated_pair: Arc<AtomicBool>,
     pair_event: Arc<Event>,
+
+    mpris_supports_album_art: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -151,6 +156,7 @@ impl Device {
         initiated_pair: Arc<AtomicBool>,
         pair_event: Arc<Event>,
         client_config: Arc<ClientConfig>,
+        server_config: Arc<ServerConfig>,
     ) -> Result<Self> {
         let cert = conf.and_then(|x| x.certificate);
 
@@ -176,6 +182,7 @@ impl Device {
             config_provider,
             connected_clients,
 
+            server_config,
             client_config,
 
             stream_r: BufReader::new(r).lines(),
@@ -187,6 +194,8 @@ impl Device {
 
             initiated_pair,
             pair_event,
+
+            mpris_supports_album_art: false,
         })
     }
 
@@ -211,7 +220,6 @@ impl Device {
         sha256.update(own_key);
         sha256.update(device_key);
         let digest = sha256.finalize();
-        info!("digest: {:?}", digest);
         Ok(hex::encode(digest))
     }
 
@@ -232,12 +240,8 @@ impl Device {
             let connectivity = handler.get_connectivity_report().await;
             self.stream_w.send(make_packet_str!(connectivity)?).await?;
 
-            let system_volume = SystemVolume {
-                sink_list: Some(handler.get_system_volume().await),
-                enabled: None,
-                name: None,
-                muted: None,
-                volume: None,
+            let system_volume = SystemVolume::List {
+                sink_list: handler.get_system_volume().await,
             };
             self.stream_w.send(make_packet_str!(system_volume)?).await?;
         }
@@ -374,12 +378,8 @@ impl Device {
                         SystemVolumeRequest::TYPE => {
                             let request: SystemVolumeRequest = json::from_value(packet.body)?;
                             if request.request_sinks.unwrap_or(false) {
-                                let system_volume = SystemVolume {
-                                    sink_list: Some(handler.get_system_volume().await),
-                                    enabled: None,
-                                    name: None,
-                                    muted: None,
-                                    volume: None,
+                                let system_volume = SystemVolume::List {
+                                    sink_list: handler.get_system_volume().await,
                                 };
                                 self.stream_w.send(make_packet_str!(system_volume)?).await?;
                             } else {
@@ -394,10 +394,11 @@ impl Device {
                             let request: ShareRequest = json::from_value(packet.body)?;
                             if let Some(transfer_info) = packet.payload_transfer_info
                                 && let Some(size) = packet.payload_size
+                                && let ShareRequest::File(file) = request
                             {
                                 handler
                                     .handle_file_share(
-                                        request,
+                                        file,
                                         size,
                                         get_payload(
                                             self.ip,
@@ -407,10 +408,115 @@ impl Device {
                                         .await?,
                                     )
                                     .await;
-                            } else if let Some(url) = request.url {
-                                handler.handle_url_share(url).await;
-                            } else if let Some(text) = request.text {
-                                handler.handle_text_share(text).await;
+                            } else {
+                                match request {
+                                    ShareRequest::Text { text } => {
+                                        handler.handle_text_share(text).await;
+                                    }
+                                    ShareRequest::Url { url } => {
+                                        handler.handle_url_share(url).await;
+                                    }
+                                    ShareRequest::File { .. } => {} // ignore - no payload transfer info
+                                }
+                            }
+                        }
+                        Mpris::TYPE => {
+                            let mpris: Mpris = json::from_value(packet.body)?;
+                            match mpris {
+                                Mpris::List {
+                                    player_list,
+                                    supports_album_art_payload,
+                                } => {
+                                    self.mpris_supports_album_art = supports_album_art_payload;
+                                    handler.handle_mpris_player_list(player_list).await;
+                                }
+                                Mpris::TransferringArt {
+                                    player,
+                                    album_art_url: _,
+                                    transferring_album_art,
+                                } => {
+                                    if transferring_album_art
+                                        && let Some(transfer_info) = packet.payload_transfer_info
+                                    {
+                                        handler
+                                            .handle_mpris_player_album_art(
+                                                player,
+                                                get_payload(
+                                                    self.ip,
+                                                    transfer_info,
+                                                    self.client_config.clone(),
+                                                )
+                                                .await?,
+                                            )
+                                            .await;
+                                    }
+                                }
+                                Mpris::Info(player) => {
+                                    handler.handle_mpris_player_info(player).await;
+                                }
+                            }
+                        }
+                        MprisRequest::TYPE => {
+                            let req: MprisRequest = json::from_value(packet.body)?;
+                            match req {
+                                MprisRequest::List { .. } => {
+                                    let packet = Mpris::List {
+                                        player_list: handler.get_mpris_player_list().await,
+                                        supports_album_art_payload: true,
+                                    };
+                                    self.stream_w.send(make_packet_str!(packet)?).await?;
+                                }
+                                MprisRequest::PlayerRequest {
+                                    player,
+                                    request_album_art,
+                                    ..
+                                } => {
+                                    if let Some(player_info) =
+                                        handler.get_mpris_player(player.clone()).await
+                                    {
+                                        if let Some(url) = request_album_art
+                                            && url.starts_with("file://")
+                                            && player_info
+                                                .album_art_url
+                                                .as_ref()
+                                                .map(|x| *x == url)
+                                                .unwrap_or(false)
+                                        {
+                                            let server_conf = self.server_config.clone();
+                                            let ret = async {
+                                                let art =
+                                                    File::open(url.trim_start_matches("file://"))
+                                                        .await?;
+                                                let size = art.metadata().await?.size();
+                                                let (port, fut) =
+                                                    create_payload(art, server_conf).await?;
+                                                let packet = Mpris::TransferringArt {
+                                                    player,
+                                                    album_art_url: url,
+                                                    transferring_album_art: true,
+                                                };
+                                                self.stream_w
+                                                    .send(make_packet_str_payload!(
+                                                        packet,
+                                                        size as i64,
+                                                        port
+                                                    )?)
+                                                    .await?;
+                                                tokio::spawn(fut);
+                                                Ok::<(), KdeConnectError>(())
+                                            }
+                                            .await;
+                                            if let Err(e) = ret {
+                                                error!("failed to send album art: {:?}", e);
+                                            }
+                                        }
+                                        let packet = Mpris::Info(player_info);
+                                        self.stream_w.send(make_packet_str!(packet)?).await?;
+                                    }
+                                }
+                                MprisRequest::Action(action) => {
+                                    handler.handle_mpris_player_action(action).await;
+                                }
                             }
                         }
                         _ => error!(
@@ -509,26 +615,19 @@ impl DeviceClient {
     }
 
     pub async fn send_volume_update(&self, streams: Vec<SystemVolumeStream>) -> Result<()> {
-        let packet = SystemVolume {
-            sink_list: Some(streams),
-            name: None,
-            enabled: None,
-            muted: None,
-            volume: None,
-        };
+        let packet = SystemVolume::List { sink_list: streams };
         self.send_packet(make_packet_str!(packet)?).await
     }
 
     pub async fn send_volume_stream_update(
         &self,
-        id: String,
+        name: String,
         enabled: Option<bool>,
         muted: Option<bool>,
         volume: Option<i32>,
     ) -> Result<()> {
-        let packet = SystemVolume {
-            sink_list: None,
-            name: Some(id),
+        let packet = SystemVolume::Update {
+            name,
             enabled,
             muted,
             volume,
@@ -612,30 +711,12 @@ impl DeviceClient {
     }
 
     pub async fn share_text(&self, text: String) -> Result<()> {
-        let packet = ShareRequest {
-            text: Some(text),
-            url: None,
-            filename: None,
-            creation_time: None,
-            last_modified: None,
-            open: None,
-            number_of_files: None,
-            total_payload_size: None,
-        };
+        let packet = ShareRequest::Text { text };
         self.send_packet(make_packet_str!(packet)?).await
     }
 
     pub async fn share_url(&self, url: String) -> Result<()> {
-        let packet = ShareRequest {
-            text: None,
-            url: Some(url),
-            filename: None,
-            creation_time: None,
-            last_modified: None,
-            open: None,
-            number_of_files: None,
-            total_payload_size: None,
-        };
+        let packet = ShareRequest::Url { url };
         self.send_packet(make_packet_str!(packet)?).await
     }
 
@@ -647,16 +728,14 @@ impl DeviceClient {
         total_payload_size: Option<i64>,
     ) -> Result<()> {
         let (port, fut) = create_payload(file.buf, self.server_config.clone()).await?;
-        let packet = ShareRequest {
-            text: None,
-            url: None,
-            filename: Some(file.name),
+        let packet = ShareRequest::File(ShareRequestFile {
+            filename: file.name,
             creation_time: file.creation_time,
             last_modified: file.last_modified,
             open: Some(open),
             number_of_files,
             total_payload_size,
-        };
+        });
         self.send_packet(make_packet_str_payload!(packet, file.size, port)?)
             .await?;
         fut.await;
@@ -703,6 +782,63 @@ impl DeviceClient {
         }
         Ok(())
     }
+
+    pub async fn send_mpris_list(&self, list: Vec<String>) -> Result<()> {
+        let packet = Mpris::List {
+            player_list: list,
+            supports_album_art_payload: true,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn send_mpris_album_art(
+        &self,
+        player: String,
+        url: String,
+        art: DevicePayload<impl AsyncRead + Sync + Send + Unpin>,
+    ) -> Result<()> {
+        let (port, fut) = create_payload(art.buf, self.server_config.clone()).await?;
+        let packet = Mpris::TransferringArt {
+            player,
+            album_art_url: url,
+            transferring_album_art: true,
+        };
+        self.send_packet(make_packet_str_payload!(packet, art.size, port)?)
+            .await?;
+        fut.await;
+        Ok(())
+    }
+
+    pub async fn send_mpris_info(&self, player: MprisPlayer) -> Result<()> {
+        let packet = Mpris::Info(player);
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn request_mpris_list(&self) -> Result<()> {
+        let packet = MprisRequest::List {
+            request_player_list: true,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn request_mpris_info(
+        &self,
+        player: String,
+        album_art: Option<String>,
+    ) -> Result<()> {
+        let packet = MprisRequest::PlayerRequest {
+            player,
+            request_now_playing: Some(true),
+            request_volume: Some(true),
+            request_album_art: album_art,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn request_mpris_action(&self, action: MprisRequestAction) -> Result<()> {
+        let packet = MprisRequest::Action(action);
+        self.send_packet(make_packet_str!(packet)?).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -719,12 +855,20 @@ pub trait DeviceHandler {
     async fn handle_multi_file_share(&mut self, packet: ShareRequestUpdate);
     async fn handle_file_share(
         &mut self,
-        packet: ShareRequest,
+        packet: ShareRequestFile,
         size: i64,
         data: Pin<Box<dyn AsyncRead + Sync + Send>>,
     );
     async fn handle_url_share(&mut self, url: String);
     async fn handle_text_share(&mut self, text: String);
+    async fn handle_mpris_player_list(&mut self, list: Vec<String>);
+    async fn handle_mpris_player_info(&mut self, player: MprisPlayer);
+    async fn handle_mpris_player_album_art(
+        &mut self,
+        player: String,
+        art: Pin<Box<dyn AsyncRead + Sync + Send>>,
+    );
+    async fn handle_mpris_player_action(&mut self, action: MprisRequestAction);
 
     async fn handle_pairing_request(&mut self) -> bool;
 
@@ -732,16 +876,18 @@ pub trait DeviceHandler {
     async fn get_clipboard_content(&mut self) -> String;
     async fn get_connectivity_report(&mut self) -> ConnectivityReport;
     async fn get_system_volume(&mut self) -> Vec<SystemVolumeStream>;
+    async fn get_mpris_player_list(&mut self) -> Vec<String>;
+    async fn get_mpris_player(&mut self, player: String) -> Option<MprisPlayer>;
 
     async fn handle_exit(&mut self);
 }
 
 pub struct DeviceFile<S: AsyncRead + Sync + Send + Unpin> {
-    buf: S,
-    size: i64,
-    name: String,
-    creation_time: Option<u128>,
-    last_modified: Option<u128>,
+    pub buf: S,
+    pub size: i64,
+    pub name: String,
+    pub creation_time: Option<u128>,
+    pub last_modified: Option<u128>,
 }
 
 impl DeviceFile<File> {
@@ -780,5 +926,19 @@ impl DeviceFile<File> {
                 .map_err(|_| KdeConnectError::OsStringConversionError)?,
         )
         .await
+    }
+}
+
+pub struct DevicePayload<S: AsyncRead + Sync + Send + Unpin> {
+    pub buf: S,
+    pub size: i64,
+}
+
+impl<S: AsyncRead + Sync + Send + Unpin> From<DeviceFile<S>> for DevicePayload<S> {
+    fn from(file: DeviceFile<S>) -> Self {
+        Self {
+            buf: file.buf,
+            size: file.size,
+        }
     }
 }

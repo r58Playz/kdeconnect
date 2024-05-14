@@ -40,7 +40,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
     device::create_device,
-    packets::{Battery, Clipboard, ClipboardConnect, ConnectivityReport, FindPhone, Ping, Presenter, ShareRequest, SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION},
+    packets::{Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport, ConnectivityReportRequest, FindPhone, Mpris, MprisRequest, Ping, Presenter, ShareRequest, SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION},
     util::NoCertificateVerification,
 };
 
@@ -222,26 +222,34 @@ impl KdeConnect {
             incoming_capabilities: vec![
                 Ping::TYPE.to_string(),
                 Battery::TYPE.to_string(),
-                FindPhone::TYPE.to_string(),
+                BatteryRequest::TYPE.to_string(),
                 Clipboard::TYPE.to_string(),
                 ClipboardConnect::TYPE.to_string(),
+                FindPhone::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),
+                ConnectivityReportRequest::TYPE.to_string(),
                 Presenter::TYPE.to_string(),
                 SystemVolume::TYPE.to_string(),
                 SystemVolumeRequest::TYPE.to_string(),
                 ShareRequest::TYPE.to_string(),
+                Mpris::TYPE.to_string(),
+                MprisRequest::TYPE.to_string(),
             ],
             outgoing_capabilities: vec![
                 Ping::TYPE.to_string(),
                 Battery::TYPE.to_string(),
-                FindPhone::TYPE.to_string(),
+                BatteryRequest::TYPE.to_string(),
                 Clipboard::TYPE.to_string(),
                 ClipboardConnect::TYPE.to_string(),
+                FindPhone::TYPE.to_string(),
                 ConnectivityReport::TYPE.to_string(),
+                ConnectivityReportRequest::TYPE.to_string(),
                 Presenter::TYPE.to_string(),
                 SystemVolume::TYPE.to_string(),
                 SystemVolumeRequest::TYPE.to_string(),
                 ShareRequest::TYPE.to_string(),
+                Mpris::TYPE.to_string(),
+                MprisRequest::TYPE.to_string(),
             ],
             tcp_port,
         };
