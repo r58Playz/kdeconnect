@@ -1,6 +1,33 @@
 import SwiftUI
 import CoreMotion
 
+// Compatibility with catppuccin-ios
+extension ShapeStyle where Self == Color {
+    static var uikitGreen: Color {
+        Color(UIColor.systemGreen)
+    }
+
+    static var uikitRed: Color {
+        Color(UIColor.systemRed)
+    }
+
+    static var uikitSecondarySystemBackground: Color {
+        Color(UIColor.secondarySystemBackground)
+    }
+
+    static var uikitLabel: Color {
+        Color(UIColor.label)
+    }
+
+    static var uikitSecondaryLabel: Color {
+        Color(UIColor.secondaryLabel)
+    }
+
+    static var uikitTertiaryLabel: Color {
+        Color(UIColor.tertiaryLabel)
+    }
+}
+
 var motionManager: CMMotionManager = CMMotionManager()
 
 enum DeviceType: Int, CaseIterable, Identifiable {
@@ -81,6 +108,44 @@ struct ConnectedDeviceVolumeStream: Identifiable, Equatable {
     var volume: Int
 }
 
+enum ConnectedDeviceMprisPlayerLoop: Int, Identifiable, Equatable {
+    case None = 0
+    case Track = 1
+    case Playlist = 2
+
+    var id: Self { self }
+}
+
+struct ConnectedDeviceMprisPlayer: Identifiable, Equatable, Hashable {
+    var id: String
+
+    var title: String
+    var artist: String
+    var album: String
+
+    var albumArt: String
+
+    var url: String
+
+    var isPlaying: Bool 
+
+    var canPause: Bool 
+    var canPlay: Bool 
+
+    var canGoNext: Bool 
+    var canGoPrevious: Bool 
+
+    var canSeek: Bool 
+
+    var shuffle: Bool 
+
+    var position: Int
+    var length: Int
+    var volume: Int
+
+    var loopStatus: ConnectedDeviceMprisPlayerLoop
+}
+
 struct ConnectedDevice: Identifiable, Equatable {
     var name: String
     var id: String
@@ -92,6 +157,7 @@ struct ConnectedDevice: Identifiable, Equatable {
     var clipboard: String
     var connectivity: [ConnectedDeviceConnectivitySignal]
     var volume: [ConnectedDeviceVolumeStream]
+    var player: [ConnectedDeviceMprisPlayer]
 }
 
 func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
@@ -157,9 +223,59 @@ struct ContentView: View {
             let muted = dict.value(forKey: "muted") as? Bool,
             let maxVolume = dict.value(forKey: "max_volume") as? Int,
             let volume = dict.value(forKey: "volume") as? Int {
-            return ConnectedDeviceVolumeStream(id: name, description: description, enabled: hasEnabled ? enabled : nil, muted: muted, maxVolume: maxVolume, volume: volume)
+            return ConnectedDeviceVolumeStream(
+                id: name,
+                description: description,
+                enabled: hasEnabled ? enabled : nil,
+                muted: muted,
+                maxVolume: maxVolume,
+                volume: volume
+            )
         } else {
-            throw "Error parsing connected device connectivity"
+            throw "Error parsing connected device volume"
+        }
+    }
+
+    func parsePlayer(dict: NSDictionary) throws -> ConnectedDeviceMprisPlayer {
+        if let id = dict.value(forKey: "id") as? String,
+            let title = dict.value(forKey: "title") as? String,
+            let artist = dict.value(forKey: "artist") as? String,
+            let album = dict.value(forKey: "album") as? String,
+            let albumArt = dict.value(forKey: "album_art") as? String,
+            let url = dict.value(forKey: "url") as? String,
+            let isPlaying = dict.value(forKey: "is_playing") as? Bool,
+            let canPause = dict.value(forKey: "can_pause") as? Bool,
+            let canPlay = dict.value(forKey: "can_play") as? Bool,
+            let canGoNext = dict.value(forKey: "can_go_next") as? Bool,
+            let canGoPrevious = dict.value(forKey: "can_go_previous") as? Bool,
+            let canSeek = dict.value(forKey: "can_seek") as? Bool,
+            let shuffle = dict.value(forKey: "shuffle") as? Bool,
+            let position = dict.value(forKey: "position") as? Int,
+            let length = dict.value(forKey: "length") as? Int,
+            let volume = dict.value(forKey: "volume") as? Int,
+            let loop = dict.value(forKey: "loop") as? Int,
+            let loopStatus = ConnectedDeviceMprisPlayerLoop(rawValue: loop) {
+            return ConnectedDeviceMprisPlayer(
+                id: id,
+                title: title,
+                artist: artist,
+                album: album,
+                albumArt: albumArt,
+                url: url,
+                isPlaying: isPlaying,
+                canPause: canPause,
+                canPlay: canPlay,
+                canGoNext: canGoNext,
+                canGoPrevious: canGoPrevious,
+                canSeek: canSeek,
+                shuffle: shuffle,
+                position: position,
+                length: length,
+                volume: volume,
+                loopStatus: loopStatus
+            ) 
+        } else {
+            throw "Error parsing connected device mpris player"
         }
     }
 
@@ -178,9 +294,11 @@ struct ContentView: View {
                 let clipboard = $0.value(forKey: "clipboard") as? String,
                 let connectivity = $0.value(forKey: "connectivity") as? [NSDictionary],
                 let volume = $0.value(forKey: "volume") as? [NSDictionary],
+                let player = $0.value(forKey: "player") as? [NSDictionary],
                 let parsedType = DeviceType(rawValue: type),
                 let parsedConnectivity = try? connectivity.map({ try parseConnectivity(dict: $0) }),
-                let parsedVolume = try? volume.map({ try parseVolume(dict: $0) }) {
+                let parsedVolume = try? volume.map({ try parseVolume(dict: $0) }),
+                let parsedPlayer = try? player.map({ try parsePlayer(dict: $0) }) {
                     let device = ConnectedDevice(
                         name: name,
                         id: id,
@@ -191,7 +309,8 @@ struct ContentView: View {
                         batteryLow: batteryUnderThreshold == 1,
                         clipboard: clipboard,
                         connectivity: parsedConnectivity,
-                        volume: parsedVolume
+                        volume: parsedVolume,
+                        player: parsedPlayer
                     )
                     return device
             } else {
@@ -256,9 +375,9 @@ struct ContentView: View {
                                         Image(systemName: device.type.toSFSymbol())
                                         if device.paired {
                                             if device.batteryCharging {
-                                                Image(systemName: "battery.100.bolt").foregroundStyle(.green)
+                                                Image(systemName: "battery.100.bolt").foregroundStyle(.uikitGreen)
                                             } else if device.batteryLow {
-                                                Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.red)
+                                                Image(systemName: batteryToSFSymbol(device: $device)).foregroundStyle(.uikitRed)
                                             } else {
                                                 Image(systemName: batteryToSFSymbol(device: $device))
                                             }

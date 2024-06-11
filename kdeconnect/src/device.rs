@@ -12,7 +12,7 @@ use std::{
 };
 
 use event_listener::Event;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use sha2::{Digest, Sha256};
@@ -391,7 +391,14 @@ impl Device {
                             handler.handle_multi_file_share(update).await;
                         }
                         ShareRequest::TYPE => {
-                            let request: ShareRequest = json::from_value(packet.body)?;
+                            // weird bug, fails to deser ShareRequestFile variant so we do it
+                            // manually
+                            let request: ShareRequest =
+                                if let Ok(request_file) = json::from_value(packet.body.clone()) {
+                                    ShareRequest::File(request_file)
+                                } else {
+                                    json::from_value(packet.body)?
+                                };
                             if let Some(transfer_info) = packet.payload_transfer_info
                                 && let Some(size) = packet.payload_size
                                 && let ShareRequest::File(file) = request
@@ -416,7 +423,7 @@ impl Device {
                                     ShareRequest::Url { url } => {
                                         handler.handle_url_share(url).await;
                                     }
-                                    ShareRequest::File { .. } => {} // ignore - no payload transfer info
+                                    ShareRequest::File(_) => {} // ignore - no payload transfer info
                                 }
                             }
                         }
@@ -529,6 +536,7 @@ impl Device {
                     use DeviceAction as A;
                     match action {
                         A::SendPacket(packet, response) => {
+                            info!("packet {:?}", packet);
                             let _ = response.send(
                                 self.stream_w
                                     .send(packet)

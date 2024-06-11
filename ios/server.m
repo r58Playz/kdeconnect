@@ -34,6 +34,32 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
   }
   kdeconnect_free_volume(volumeStreams);
 
+	NSMutableArray *player = [NSMutableArray new];
+	Vec_KConnectMprisPlayer_t players = kdeconnect_device_get_players(device);
+	for (int i = 0; i < players.len; i++) {
+		KConnectMprisPlayer_t *mprisPlayer = &players.ptr[i];
+		[player     addObject:@{
+										@"id": [NSString stringWithUTF8String:mprisPlayer->player],
+								 @"title": [NSString stringWithUTF8String:mprisPlayer->title],
+								@"artist": [NSString stringWithUTF8String:mprisPlayer->artist],
+								 @"album": [NSString stringWithUTF8String:mprisPlayer->album],
+						 @"album_art": [NSString stringWithUTF8String:mprisPlayer->album_art_url],
+									 @"url": [NSString stringWithUTF8String:mprisPlayer->url],
+						@"is_playing": [NSNumber numberWithBool:mprisPlayer->is_playing],
+						 @"can_pause": [NSNumber numberWithBool:mprisPlayer->can_pause],
+							@"can_play": [NSNumber numberWithBool:mprisPlayer->can_play],
+					 @"can_go_next": [NSNumber numberWithBool:mprisPlayer->can_go_next],
+			 @"can_go_previous": [NSNumber numberWithBool:mprisPlayer->can_go_previous],
+							@"can_seek": [NSNumber numberWithBool:mprisPlayer->can_seek],
+							 @"shuffle": [NSNumber numberWithBool:mprisPlayer->shuffle],
+							@"position": [NSNumber numberWithInt:mprisPlayer->pos],
+								@"length": [NSNumber numberWithInt:mprisPlayer->length],
+								@"volume": [NSNumber numberWithInt:mprisPlayer->volume],
+									@"loop": [NSNumber numberWithInt:mprisPlayer->loop_status],
+		}];
+	}
+	kdeconnect_free_players(players);
+
   return @{
                           @"id": [NSString stringWithUTF8String:device->id],
                         @"name": [NSString stringWithUTF8String:device->name],
@@ -45,6 +71,7 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
                    @"clipboard": [NSString stringWithUTF8String:kdeconnect_device_get_clipboard_content(device)],
                 @"connectivity": connectivity,
                       @"volume": volume,
+											@"player": player,
   };
 }
 
@@ -78,6 +105,8 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 		[messagingCenter registerForMessageName:@"get_volume" target:self selector:@selector(requestVolume:userInfo:)];
 		[messagingCenter registerForMessageName:@"send_volume" target:self selector:@selector(sendVolume:userInfo:)];
 		[messagingCenter registerForMessageName:@"share_files" target:self selector:@selector(shareFiles:userInfo:)];
+		[messagingCenter registerForMessageName:@"get_players" target:self selector:@selector(requestPlayers:userInfo:)];
+		[messagingCenter registerForMessageName:@"request_player_action" target:self selector:@selector(requestPlayerAction:userInfo:)];
 		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
@@ -199,6 +228,34 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 
       free(filesArr);
     }
+    kdeconnect_free_device(device);
+  }
+}
+- (void)requestPlayers:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_request_players(device);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)requestPlayer:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  NSString *playerid = (NSString*)[userInfo objectForKey:@"player_id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_request_player(device, [playerid UTF8String]);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)requestPlayerAction:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  NSString *playerid = (NSString*)[userInfo objectForKey:@"player_id"];
+	NSNumber *playeraction = (NSNumber*)[userInfo objectForKey:@"player_action"];
+	NSNumber *playeractionint = (NSNumber*)[userInfo objectForKey:@"player_action_int"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_request_player_action(device, [playerid UTF8String], [playeraction intValue], [playeractionint intValue]);
     kdeconnect_free_device(device);
   }
 }

@@ -18,6 +18,9 @@ void stopPresenter(NSString *id);
 void requestVolume(NSString *id);
 void sendVolume(NSString *id, NSString *name, NSNumber *enabled, NSNumber *muted, NSNumber *volume);
 void sendFiles(NSString *id, NSArray *files, NSNumber* open);
+void requestPlayers(NSString *id);
+void requestPlayer(NSString *id, NSString *playerId);
+void requestPlayerAction(NSString *id, NSString *playerId, NSNumber *action, NSNumber *val);
 void sendExit();
 
 @class KConnectSwiftServer;

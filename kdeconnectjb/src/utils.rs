@@ -39,7 +39,7 @@ impl SharedLogger for IosLogWrapper {
 #[macro_export]
 macro_rules! build_runtime {
     () => {
-        RUNTIME.get_or_try_init(|| Builder::new_multi_thread().enable_all().build())
+        $crate::RUNTIME.get_or_try_init(|| tokio::runtime::Builder::new_multi_thread().enable_all().build())
     };
 }
 

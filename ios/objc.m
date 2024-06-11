@@ -333,6 +333,11 @@ void open_text_callback(char *text) {
   CURRENT_CLIPBOARD = textNS;
 }
 
+void player_callback(char *device_id) {
+  trySendRefreshToApp();
+  kdeconnect_free_string(device_id);
+}
+
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
   @autoreleasepool {
     KDECONNECT_DATA_PATH = @"/var/mobile/kdeconnect";
@@ -447,6 +452,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
     kdeconnect_register_open_file_callback(open_file_callback);
     kdeconnect_register_open_url_callback(open_url_callback);
     kdeconnect_register_open_text_callback(open_text_callback);
+    kdeconnect_register_player_change_callback(player_callback);
 
     NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(

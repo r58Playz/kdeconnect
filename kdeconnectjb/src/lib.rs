@@ -1,6 +1,7 @@
 #![feature(once_cell_try, let_chains)]
 #[macro_use]
 mod utils;
+mod callbacks;
 mod device;
 
 use std::{
@@ -11,17 +12,18 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use callbacks::KConnectCallbacks;
 use device::{
     KConnectConnectivitySignal, KConnectDevice, KConnectDeviceState, KConnectFfiDevice,
     KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
-    KConnectVolumeStream,
+    KConnectMprisPlayer, KConnectMprisPlayerAction, KConnectVolumeStream,
 };
 use kdeconnect::{
     config::FsConfig,
     device::DeviceFile,
     packets::{
         Battery, ConnectivityReport, ConnectivityReportNetworkType, ConnectivityReportSignal,
-        MprisLoopStatus, MprisPlayer, Presenter,
+        MprisAction, MprisLoopStatus, MprisPlayer, MprisRequestAction, Presenter,
     },
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
@@ -33,10 +35,7 @@ use oslog::OsLogger;
 use safer_ffi::{boxed::Box_, ffi_export, prelude::*};
 #[cfg(target_os = "ios")]
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
-use tokio::{
-    runtime::{Builder, Runtime},
-    sync::Mutex,
-};
+use tokio::{runtime::Runtime, sync::Mutex};
 use tokio_stream::StreamExt;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -75,201 +74,6 @@ impl KConnectState {
     }
 }
 
-struct KConnectCallbacks {
-    pub initialized: Option<Arc<dyn Fn() + Sync + Send>>,
-    pub discovered: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub gone: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-
-    pub ping_recieved: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub pair_status_changed: Option<Arc<dyn Fn(char_p::Box, bool) + Sync + Send>>,
-    pub battery_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub clipboard_changed: Option<Arc<dyn Fn(char_p::Box, char_p::Box) + Sync + Send>>,
-    pub pairing_requested: Option<Arc<dyn Fn(char_p::Box, char_p::Box) -> bool + Sync + Send>>,
-    pub find_requested: Option<Arc<dyn Fn() + Sync + Send>>,
-    pub connectivity_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub volume_change_requested: Option<Arc<dyn Fn(i32) + Sync + Send>>,
-    pub volume_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub open_file: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub open_url: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-    pub open_text: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
-}
-
-impl KConnectCallbacks {
-    pub const fn new() -> Self {
-        Self {
-            initialized: None,
-            discovered: None,
-            gone: None,
-
-            ping_recieved: None,
-            pair_status_changed: None,
-            battery_changed: None,
-            clipboard_changed: None,
-            pairing_requested: None,
-            find_requested: None,
-            connectivity_changed: None,
-            volume_change_requested: None,
-            volume_changed: None,
-            open_file: None,
-            open_url: None,
-            open_text: None,
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! call_callback {
-    ($name:ident, $($args:expr),*) => {
-        if let Some(cb) = $crate::CALLBACKS.lock().await.$name.clone() {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send((cb)($($args),*));
-            });
-            rx.await.ok()
-        } else {
-            None
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! call_callback_no_ret {
-    ($name:ident, $($args:expr),*) => {
-        if let Some(cb) = $crate::CALLBACKS.lock().await.$name.clone() {
-            std::thread::spawn(move || {
-                (cb)($($args),*);
-            });
-        }
-    };
-}
-
-macro_rules! callback {
-    ($name:ident, $type:ty, $var:ident, $($args:expr),*) => {
-        #[ffi_export]
-        pub extern "C" fn $name(callback: $type) -> bool {
-            if let Ok(rt) = build_runtime!() {
-                rt.block_on(async {
-                    #[allow(clippy::redundant_closure)]
-                    CALLBACKS
-                        .lock()
-                        .await
-                        .$var
-                        .replace(Arc::new(move |$($args),*| (callback)($($args),*)));
-                    true
-                })
-            } else {
-                false
-            }
-        }
-    };
-}
-
-callback!(
-    kdeconnect_register_init_callback,
-    extern "C" fn() -> (),
-    initialized,
-);
-
-callback!(
-    kdeconnect_register_discovered_callback,
-    extern "C" fn(char_p::Box) -> (),
-    discovered,
-    x
-);
-
-callback!(
-    kdeconnect_register_gone_callback,
-    extern "C" fn(char_p::Box) -> (),
-    gone,
-    x
-);
-
-callback!(
-    kdeconnect_register_ping_callback,
-    extern "C" fn(char_p::Box) -> (),
-    ping_recieved,
-    x
-);
-
-callback!(
-    kdeconnect_register_pair_status_changed_callback,
-    extern "C" fn(char_p::Box, bool) -> (),
-    pair_status_changed,
-    x,
-    y
-);
-
-callback!(
-    kdeconnect_register_battery_callback,
-    extern "C" fn(char_p::Box) -> (),
-    battery_changed,
-    x
-);
-
-callback!(
-    kdeconnect_register_clipboard_callback,
-    extern "C" fn(char_p::Box, char_p::Box) -> (),
-    clipboard_changed,
-    x,
-    y
-);
-
-callback!(
-    kdeconnect_register_pairing_callback,
-    extern "C" fn(char_p::Box, char_p::Box) -> bool,
-    pairing_requested,
-    x,
-    y
-);
-
-callback!(
-    kdeconnect_register_find_callback,
-    extern "C" fn() -> (),
-    find_requested,
-);
-
-callback!(
-    kdeconnect_register_connectivity_callback,
-    extern "C" fn(char_p::Box) -> (),
-    connectivity_changed,
-    x
-);
-
-callback!(
-    kdeconnect_register_device_volume_callback,
-    extern "C" fn(char_p::Box) -> (),
-    volume_changed,
-    x
-);
-
-callback!(
-    kdeconnect_register_volume_change_callback,
-    extern "C" fn(i32) -> (),
-    volume_change_requested,
-    x
-);
-
-callback!(
-    kdeconnect_register_open_file_callback,
-    extern "C" fn(char_p::Box) -> (),
-    open_file,
-    x
-);
-
-callback!(
-    kdeconnect_register_open_url_callback,
-    extern "C" fn(char_p::Box) -> (),
-    open_url,
-    x
-);
-
-callback!(
-    kdeconnect_register_open_text_callback,
-    extern "C" fn(char_p::Box) -> (),
-    open_text,
-    x
-);
-
 #[ffi_export]
 pub extern "C" fn kdeconnect_init() -> bool {
     #[cfg(target_os = "ios")]
@@ -279,7 +83,7 @@ pub extern "C" fn kdeconnect_init() -> bool {
             LevelFilter::Debug,
         );
         let stdoutlog = TermLogger::new(
-            LevelFilter::Debug,
+            LevelFilter::Info,
             Config::default(),
             TerminalMode::Stdout,
             ColorChoice::Auto,
@@ -910,6 +714,188 @@ pub extern "C" fn kdeconnect_device_share_files(
 }
 
 #[ffi_export]
+pub extern "C" fn kdeconnect_device_request_players(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.request_mpris_list().await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_request_player(
+    device: &KConnectFfiDevice,
+    player: char_p::Ref<'_>,
+) -> bool {
+    let player = player.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.request_mpris_info(player, None).await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_players(
+    device: &KConnectFfiDevice,
+) -> repr_c::Vec<KConnectMprisPlayer> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut out = Vec::new();
+
+            for stream in device
+                .state
+                .state
+                .lock()
+                .await
+                .players
+                .values()
+                .map(|x| (x.0.clone(), x.1.clone()))
+            {
+                let MprisPlayer {
+                    player,
+                    title,
+                    artist,
+                    album,
+                    is_playing,
+                    can_pause,
+                    can_play,
+                    can_go_next,
+                    can_go_previous,
+                    can_seek,
+                    loop_status,
+                    shuffle,
+                    pos,
+                    length,
+                    volume,
+                    album_art_url: _,
+                    url,
+                } = stream.0;
+
+                out.push(KConnectMprisPlayer {
+                    player: player.try_into().unwrap(),
+                    title: title.unwrap_or("".to_string()).try_into().unwrap(),
+                    artist: artist.unwrap_or("".to_string()).try_into().unwrap(),
+                    album: album.unwrap_or("".to_string()).try_into().unwrap(),
+                    is_playing: is_playing.unwrap_or(false),
+                    can_pause: can_pause.unwrap_or(false),
+                    can_play: can_play.unwrap_or(false),
+                    can_go_next: can_go_next.unwrap_or(false),
+                    can_go_previous: can_go_previous.unwrap_or(false),
+                    can_seek: can_seek.unwrap_or(false),
+                    loop_status: loop_status.unwrap_or(MprisLoopStatus::None).into(),
+                    shuffle: shuffle.unwrap_or(false),
+                    pos: pos.unwrap_or(-1),
+                    length: length.unwrap_or(-1),
+                    volume: volume.unwrap_or(100),
+                    album_art_url: stream.1.unwrap_or("".to_string()).try_into().unwrap(),
+                    url: url.unwrap_or("".to_string()).try_into().unwrap(),
+                });
+            }
+
+            Ok::<Vec<_>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_free_players(report: repr_c::Vec<KConnectMprisPlayer>) {
+    drop(report);
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_request_player_action(
+    device: &KConnectFfiDevice,
+    player: char_p::Ref<'_>,
+    action: KConnectMprisPlayerAction,
+    val: i64,
+) -> bool {
+    let player = player.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            use KConnectMprisPlayerAction as A;
+            let action = match action {
+                A::Seek => MprisRequestAction {
+                    player,
+                    seek: Some(val),
+                    ..Default::default()
+                },
+                A::Volume => MprisRequestAction {
+                    player,
+                    set_volume: Some(val),
+                    ..Default::default()
+                },
+                A::LoopStatusNone => MprisRequestAction {
+                    player,
+                    set_loop_status: Some(MprisLoopStatus::None),
+                    ..Default::default()
+                },
+                A::LoopStatusTrack => MprisRequestAction {
+                    player,
+                    set_loop_status: Some(MprisLoopStatus::Track),
+                    ..Default::default()
+                },
+                A::LoopStatusPlaylist => MprisRequestAction {
+                    player,
+                    set_loop_status: Some(MprisLoopStatus::Playlist),
+                    ..Default::default()
+                },
+                A::Position => MprisRequestAction {
+                    player,
+                    set_position: Some(val),
+                    ..Default::default()
+                },
+                A::Shuffle => MprisRequestAction {
+                    player,
+                    set_shuffle: Some(val == 1),
+                    ..Default::default()
+                },
+                A::Play => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::Play),
+                    ..Default::default()
+                },
+                A::Pause => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::Pause),
+                    ..Default::default()
+                },
+                A::PlayPause => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::PlayPause),
+                    ..Default::default()
+                },
+                A::Stop => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::Stop),
+                    ..Default::default()
+                },
+                A::Next => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::Next),
+                    ..Default::default()
+                },
+                A::Previous => MprisRequestAction {
+                    player,
+                    action: Some(MprisAction::Previous),
+                    ..Default::default()
+                },
+            };
+            device.state.client.request_mpris_action(action).await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
 pub extern "C" fn kdeconnect_on_battery_event(
     level: i32,
     charging: i32,
@@ -1156,7 +1142,10 @@ pub extern "C" fn kdeconnect_add_player(
             let state = locked.as_mut().ok_or(KdeConnectError::Other)?;
             state.current_player = Some(player);
             for device in state.devices.iter() {
-                let _ = device.client.send_mpris_list(vec!["iPhone".to_string()]).await;
+                let _ = device
+                    .client
+                    .send_mpris_list(vec!["iPhone".to_string()])
+                    .await;
             }
             Ok::<(), KdeConnectError>(())
         })

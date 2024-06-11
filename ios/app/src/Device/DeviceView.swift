@@ -4,27 +4,34 @@ struct ConnectedDeviceView: View {
     var device: Binding<ConnectedDevice>
     var refresh: () -> Void
 
+    @ViewBuilder var pairedActions: some View {
+        Button("Send ping") {
+            sendPing(device.id.wrappedValue)
+        }
+        Button("Find") {
+            sendFind(device.id.wrappedValue)
+        }
+        NavigationLink("Presenter") {
+            PresenterView(device: device)
+        }
+        NavigationLink("Volume controls") {
+            VolumeView(device: device, refresh: { refresh() })
+        }
+        NavigationLink("Share") {
+            ShareView(device: device)
+        }
+        NavigationLink("Media") {
+            MprisPlayersView(device: device, refresh: { refresh() })
+        }
+    }
+
     @ViewBuilder var actions: some View {
         Section(header: Text("Actions")) {
             Button(device.paired.wrappedValue ? "Unpair" : "Pair") {
                 sendPairReq(device.id.wrappedValue, device.paired.wrappedValue ? 0 : 1)
             }
             if (device.paired.wrappedValue) {
-                Button("Send ping") {
-                    sendPing(device.id.wrappedValue)
-                }
-                Button("Find") {
-                    sendFind(device.id.wrappedValue)
-                }
-                NavigationLink("Presenter") {
-                    PresenterView(device: device)
-                }
-                NavigationLink("Volume controls") {
-                    VolumeView(device: device, refresh: { refresh() })
-                }
-                NavigationLink("Share") {
-                    ShareView(device: device)
-                }
+                pairedActions
             }
         }
     }
@@ -128,6 +135,7 @@ struct ConnectedDeviceView: View {
         .navigationTitle(device.name.wrappedValue)
         .onAppear {
             requestVolume(device.id.wrappedValue)
+            requestPlayers(device.id.wrappedValue)
         }
     }
 }

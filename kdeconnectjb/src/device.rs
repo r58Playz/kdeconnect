@@ -1,6 +1,11 @@
 use std::{
-    collections::HashMap, error::Error, ffi::OsStr, path::PathBuf, pin::Pin, sync::Arc,
-    time::SystemTime,
+    collections::HashMap,
+    error::Error,
+    ffi::OsStr,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
@@ -8,18 +13,20 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
     packets::{
-        Battery, ConnectivityReport, DeviceType, MprisPlayer, MprisRequestAction, Ping, Presenter,
-        ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
+        Battery, ConnectivityReport, DeviceType, MprisLoopStatus, MprisPlayer, MprisRequestAction,
+        Ping, Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
         SystemVolumeStream,
     },
     KdeConnectError,
 };
-use log::{error, info};
+use log::{error, info, warn};
 use safer_ffi::prelude::*;
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncWriteExt},
     sync::Mutex,
+    task::JoinHandle,
+    time::interval,
 };
 use tokio_stream::StreamExt;
 use tokio_util::io::StreamReader;
@@ -32,7 +39,7 @@ pub struct KConnectDeviceState {
     pub clipboard: Option<String>,
     pub connectivity: Option<ConnectivityReport>,
     pub systemvolume: Option<Vec<SystemVolumeStream>>,
-    pub players: HashMap<String, (MprisPlayer, Option<String>)>,
+    pub players: HashMap<String, (MprisPlayer, Option<String>, Option<JoinHandle<()>>)>,
 }
 
 pub struct KConnectDevice {
@@ -69,6 +76,49 @@ impl KConnectHandler {
             // this should never fail
             verification_key: verification_key.try_into().unwrap(),
             documents_path,
+        }
+    }
+}
+
+impl KConnectHandler {
+    fn get_player_join_handle(&self, player: &MprisPlayer) -> Option<JoinHandle<()>> {
+        if player.is_playing.unwrap_or(false) {
+            let state_clone = self.state.clone();
+            let player_id = player.player.clone();
+            let id = self.id.clone();
+            Some(tokio::spawn(async move {
+                let mut interval = interval(Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    let mut state_locked = state_clone.lock().await;
+                    if let Some(ref mut player) = state_locked.players.get_mut(&player_id) {
+                        if player.0.is_playing.unwrap_or(false) {
+                            if let Some(ref mut pos) = player.0.pos {
+                                *pos += 1000;
+                                let id = id.clone();
+                                call_callback_no_ret!(player_changed, id);
+                            }
+                        }
+                    }
+                    drop(state_locked);
+                }
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn maybe_request_more_mpris_info(&self, player: &MprisPlayer) {
+        // we recieved some state change for a player we didn't know existed, attempt to request more info
+        if player.title.is_none() {
+            info!("attempting to request more info about {:?}", player.player);
+            let client = self.client.clone();
+            let player = player.player.clone();
+            tokio::spawn(async move {
+                if let Err(err) = client.request_mpris_info(player.clone(), None).await {
+                    warn!("failed to request more info about {:?}: {:?}", player, err)
+                }
+            });
         }
     }
 }
@@ -251,6 +301,7 @@ impl DeviceHandler for KConnectHandler {
     }
 
     async fn handle_mpris_player_list(&mut self, players: Vec<String>) {
+        info!("got player list {:?}", players);
         self.state
             .lock()
             .await
@@ -287,12 +338,65 @@ impl DeviceHandler for KConnectHandler {
                 self.handle_mpris_player_album_art(player, Box::pin(reader))
                     .await;
             }
+            info!("finished mpris download");
         }
-        self.state
-            .lock()
-            .await
-            .players
-            .insert(player.player.clone(), (player, None));
+
+        let mut locked = self.state.lock().await;
+
+        if let Some(state_player) = locked.players.get_mut(&player.player) {
+            macro_rules! assign {
+                ($item:ident) => {
+                    if let Some($item) = player.$item {
+                        state_player.0.$item = Some($item);
+                    }
+                };
+            }
+
+            assign!(title);
+            assign!(artist);
+            assign!(album);
+            assign!(is_playing);
+            assign!(can_pause);
+            assign!(can_play);
+            assign!(can_go_next);
+            assign!(can_go_previous);
+            assign!(can_seek);
+            assign!(loop_status);
+            assign!(shuffle);
+            assign!(pos);
+            assign!(length);
+            assign!(volume);
+            assign!(url);
+
+            match (
+                state_player.0.is_playing.unwrap_or(false),
+                state_player.2.is_some(),
+            ) {
+                // not playing & no future or playing & a future, do nothing
+                (false, false) | (true, true) => {}
+                // not playing & a future, abort
+                (false, true) => {
+                    // we know that it's some because of the is_some call
+                    state_player.2.take().unwrap().abort();
+                }
+                (true, false) => {
+                    state_player.2 = self.get_player_join_handle(&state_player.0);
+                }
+            }
+
+            self.maybe_request_more_mpris_info(&state_player.0);
+        } else {
+            let join_handle = self.get_player_join_handle(&player);
+            self.maybe_request_more_mpris_info(&player);
+            locked
+                .players
+                .insert(player.player.clone(), (player, None, join_handle));
+        }
+
+        drop(locked);
+
+        let id = self.id.clone();
+        call_callback_no_ret!(player_changed, id);
     }
 
     async fn handle_mpris_player_album_art(
@@ -304,6 +408,7 @@ impl DeviceHandler for KConnectHandler {
             URL_SAFE_NO_PAD.encode(format!("{}__{}", self.config.id, &player)) + ".png";
         let mut path = self.documents_path.join("album_art/");
         let state = self.state.clone();
+        let id = self.id.clone();
         tokio::spawn(async move {
             let ret = async move {
                 if !path.is_dir() {
@@ -327,8 +432,9 @@ impl DeviceHandler for KConnectHandler {
                 Ok(path) => {
                     if let Some(player) = state.lock().await.players.get_mut(&player) {
                         player.1.replace(path);
+                        call_callback_no_ret!(player_changed, id);
+                        info!("saved album art for player {:?}", player);
                     }
-                    info!("saved album art for player {:?}", player);
                 }
                 Err(err) => {
                     error!(
@@ -516,4 +622,63 @@ pub struct KConnectVolumeStream {
     pub max_volume: i32,
 
     pub volume: i32,
+}
+
+#[derive_ReprC]
+#[repr(u8)]
+pub enum KConnectMprisLoopStatus {
+    None,
+    Track,
+    Playlist,
+}
+
+impl From<MprisLoopStatus> for KConnectMprisLoopStatus {
+    fn from(value: MprisLoopStatus) -> Self {
+        match value {
+            MprisLoopStatus::None => KConnectMprisLoopStatus::None,
+            MprisLoopStatus::Track => KConnectMprisLoopStatus::Track,
+            MprisLoopStatus::Playlist => KConnectMprisLoopStatus::Playlist,
+        }
+    }
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectMprisPlayer {
+    pub player: char_p::Box,
+    pub title: char_p::Box,
+    pub artist: char_p::Box,
+    pub album: char_p::Box,
+    pub is_playing: bool,
+    pub can_pause: bool,
+    pub can_play: bool,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
+    pub can_seek: bool,
+    pub loop_status: KConnectMprisLoopStatus,
+    pub shuffle: bool,
+    pub pos: i32,
+    pub length: i32,
+    pub volume: i32,
+    pub album_art_url: char_p::Box,
+    // undocumented kdeconnect-kde field
+    pub url: char_p::Box,
+}
+
+#[derive_ReprC]
+#[repr(u8)]
+pub enum KConnectMprisPlayerAction {
+    Seek,
+    Volume,
+    LoopStatusNone,
+    LoopStatusTrack,
+    LoopStatusPlaylist,
+    Position,
+    Shuffle,
+    Play,
+    Pause,
+    PlayPause,
+    Stop,
+    Next,
+    Previous,
 }

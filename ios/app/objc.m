@@ -104,6 +104,18 @@ void sendFiles(NSString *id, NSArray *files, NSNumber* open) {
   [daemonMessageCenter sendMessageAndReceiveReplyName:@"share_files" userInfo:@{@"id":id,@"files":files,@"open":open}];
 }
 
+void requestPlayers(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"get_players" userInfo:@{@"id":id}];
+}
+
+void requestPlayer(NSString *id, NSString *playerId) {
+	[daemonMessageCenter sendMessageAndReceiveReplyName:@"get_players" userInfo:@{@"id":id, @"player_id":playerId}];
+}
+
+void requestPlayerAction(NSString *id, NSString *playerId, NSNumber *action, NSNumber *val) {
+	[daemonMessageCenter sendMessageAndReceiveReplyName:@"request_player_action" userInfo:@{@"id":id, @"player_id":playerId, @"player_action":action, @"player_action_int":val}];
+}
+
 void sendExit() {
   [daemonMessageCenter sendMessageName:@"killyourself" userInfo:nil];
 }

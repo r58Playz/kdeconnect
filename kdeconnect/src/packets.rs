@@ -264,7 +264,7 @@ pub struct SystemVolumeRequest {
 derive_type!(SystemVolumeRequest, "kdeconnect.systemvolume.request");
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(untagged, rename_all = "camelCase")]
+#[serde(untagged)]
 pub enum ShareRequest {
     File(ShareRequestFile),
     Text { text: String },
@@ -281,13 +281,16 @@ pub struct ShareRequestUpdate {
 derive_type!(ShareRequestUpdate, "kdeconnect.share.request.update");
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
 pub struct ShareRequestFile {
     pub filename: String,
+    #[serde(rename = "creationTime")]
     pub creation_time: Option<u128>,
+    #[serde(rename = "lastModified")]
     pub last_modified: Option<u128>,
     pub open: Option<bool>,
+    #[serde(rename = "numberOfFiles")]
     pub number_of_files: Option<i32>,
+    #[serde(rename = "totalPayloadSize")]
     pub total_payload_size: Option<i64>,
 }
 
@@ -338,7 +341,7 @@ pub struct MprisPlayer {
     #[serde(rename = "albumArtUrl")]
     pub album_art_url: Option<String>,
     // undocumented kdeconnect-kde field
-    pub url: Option<String>
+    pub url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
@@ -362,29 +365,30 @@ pub enum MprisRequest {
         #[serde(rename = "requestVolume")]
         request_volume: Option<bool>,
         // set to a file:// string to get kdeconnect-kde to send (local) album art
-        #[serde(rename = "albumArtUrl")]
+        #[serde(rename = "albumArtUrl", skip_serializing_if = "Option::is_none")]
         request_album_art: Option<String>,
     },
     Action(MprisRequestAction),
 }
 derive_type!(MprisRequest, "kdeconnect.mpris.request");
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct MprisRequestAction {
-    player: String,
+    pub player: String,
     // ????
-    #[serde(rename = "Seek")]
-    seek: Option<i32>,
-    #[serde(rename = "setVolume")]
-    set_volume: Option<i32>,
-    #[serde(rename = "setLoopStatus")]
-    set_loop_status: Option<MprisLoopStatus>,
+    #[serde(rename = "Seek", skip_serializing_if = "Option::is_none")]
+    pub seek: Option<i64>,
+    #[serde(rename = "setVolume", skip_serializing_if = "Option::is_none")]
+    pub set_volume: Option<i64>,
+    #[serde(rename = "setLoopStatus", skip_serializing_if = "Option::is_none")]
+    pub set_loop_status: Option<MprisLoopStatus>,
     // ??????
-    #[serde(rename = "SetPosition")]
-    set_position: Option<i32>,
-    #[serde(rename = "setShuffle")]
-    set_shuffle: Option<bool>,
-    action: Option<MprisAction>,
+    #[serde(rename = "SetPosition", skip_serializing_if = "Option::is_none")]
+    pub set_position: Option<i64>,
+    #[serde(rename = "setShuffle", skip_serializing_if = "Option::is_none")]
+    pub set_shuffle: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<MprisAction>,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
