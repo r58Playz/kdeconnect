@@ -83,7 +83,7 @@ pub extern "C" fn kdeconnect_init() -> bool {
             LevelFilter::Debug,
         );
         let stdoutlog = TermLogger::new(
-            LevelFilter::Info,
+            LevelFilter::Debug,
             Config::default(),
             TerminalMode::Stdout,
             ColorChoice::Auto,
@@ -135,7 +135,12 @@ pub extern "C" fn kdeconnect_start(
 
             info!("created kdeconnect client");
 
-            tokio::spawn(async move { kdeconnect.start_server().await });
+            tokio::spawn(async move {
+                info!(
+                    "kdeconnect server ret {:?}",
+                    kdeconnect.start_server().await
+                )
+            });
 
             call_callback_no_ret!(initialized,);
 
