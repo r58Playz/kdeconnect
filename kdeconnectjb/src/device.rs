@@ -13,9 +13,9 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
     packets::{
-        Battery, ConnectivityReport, DeviceType, MprisLoopStatus, MprisPlayer, MprisRequestAction,
-        Ping, Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
-        SystemVolumeStream,
+        Battery, ConnectivityReport, DeviceType, MprisAction, MprisLoopStatus, MprisPlayer,
+        MprisRequestAction, Ping, Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume,
+        SystemVolumeRequest, SystemVolumeStream,
     },
     KdeConnectError,
 };
@@ -447,7 +447,35 @@ impl DeviceHandler for KConnectHandler {
     }
 
     async fn handle_mpris_player_action(&mut self, action: MprisRequestAction) {
-        // TODO - ignore for now
+        use KConnectMprisPlayerAction as A;
+        if let Some(seek) = action.seek {
+            call_callback_no_ret!(player_change_requested, A::Seek, seek);
+        } else if let Some(loop_status) = action.set_loop_status {
+            let action = match loop_status {
+                MprisLoopStatus::None => A::LoopStatusNone,
+                MprisLoopStatus::Track => A::LoopStatusTrack,
+                MprisLoopStatus::Playlist => A::LoopStatusPlaylist,
+            };
+            call_callback_no_ret!(player_change_requested, action, 0);
+        } else if let Some(position) = action.set_position {
+            call_callback_no_ret!(player_change_requested, A::Position, position);
+        } else if let Some(shuffle) = action.set_shuffle {
+            call_callback_no_ret!(
+                player_change_requested,
+                A::Shuffle,
+                if shuffle { 1 } else { 0 }
+            );
+        } else if let Some(action) = action.action {
+            let action = match action {
+                MprisAction::Play => A::Play,
+                MprisAction::Pause => A::Pause,
+                MprisAction::PlayPause => A::PlayPause,
+                MprisAction::Stop => A::Stop,
+                MprisAction::Next => A::Next,
+                MprisAction::Previous => A::Previous,
+            };
+            call_callback_no_ret!(player_change_requested, action, 0);
+        }
     }
 
     async fn handle_pairing_request(&mut self) -> bool {

@@ -1,4 +1,3 @@
-// vim: tabstop=2 shiftwidth=2
 #import "headers/IOPSKeys.h"
 #import "headers/IOPowerSources.h"
 #import "headers/MobileGestalt.h"
@@ -38,6 +37,7 @@ NSMutableArray *TRUSTED_NETWORKS;
 NSString *CURRENT_CLIPBOARD = @"";
 
 float CURRENT_VOLUME = 0.0f;
+double CURRENT_MEDIA_POSITION = 0.0f;
 
 CPDistributedMessagingCenter *appMessageCenter;
 
@@ -49,54 +49,55 @@ WiFiDeviceClientRef wifiClient;
 MPVolumeController *volumeClient;
 
 NSString *getDeviceId() {
-  NSString *uuid = (__bridge NSString *)MGCopyAnswer(
-      kMGUniqueDeviceID, (__bridge CFDictionaryRef)(@{}));
-  uuid = [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""];
-  uuid = [uuid stringByReplacingOccurrencesOfString:@"_" withString:@""];
-  return uuid;
+	NSString *uuid = (__bridge NSString *)MGCopyAnswer(
+			kMGUniqueDeviceID, (__bridge CFDictionaryRef)(@{}));
+	uuid = [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""];
+	uuid = [uuid stringByReplacingOccurrencesOfString:@"_" withString:@""];
+	return uuid;
 }
 
 typedef struct {
-  int level;
-  int charging;
+	int level;
+	int charging;
 } BatteryInfo;
 
 NSString *getWifiNetworkSsid() {
-  WiFiNetworkRef network = WiFiDeviceClientCopyCurrentNetwork(wifiClient);
-  return (__bridge_transfer NSString *)WiFiNetworkGetSSID(network);
+	WiFiNetworkRef network = WiFiDeviceClientCopyCurrentNetwork(wifiClient);
+	return (__bridge_transfer NSString *)WiFiNetworkGetSSID(network);
 }
 
 void trySendMessageToApp(NSString *msg, NSDictionary *info) {
-  if (![appMessageCenter sendMessageName:msg userInfo:info]) {
-    NSLog(@"failed to send!! reconnecting!!");
-    // reconnect
-    appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
-    [appMessageCenter sendMessageName:msg userInfo:info];
-  }
+	if (![appMessageCenter sendMessageName:msg userInfo:info]) {
+		// reconnect
+		appMessageCenter = [CPDistributedMessagingCenter centerNamed:@"dev.r58playz.kdeconnectjb.app"];
+		[appMessageCenter sendMessageName:msg userInfo:info];
+	}
 }
 
 void trySendRefreshToApp() {
-  trySendMessageToApp(@"refresh", nil);
+	trySendMessageToApp(@"refresh", nil);
 }
 
 bool getBatteryInfo(BatteryInfo *info) {
-  CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
-  if (!powerInfo) return false;
-  CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
-  if (!powerSourcesList) return false;
+	CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
+	if (!powerInfo) return false;
+	CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
+	if (!powerSourcesList) return false;
 
-  if (CFArrayGetCount(powerSourcesList)) {
-    CFDictionaryRef powerSourceInfo = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, 0));
-    CFNumberRef capacityRef = (CFNumberRef)CFDictionaryGetValue(powerSourceInfo, CFSTR("Current Capacity"));
-    uint32_t capacity;
-    if (!CFNumberGetValue(capacityRef, kCFNumberSInt32Type, &capacity)) return false;
-    CFBooleanRef isCharging = (CFBooleanRef) CFDictionaryGetValue(powerSourceInfo, CFSTR("Is Charging"));
-    info->level = capacity;
-    info->charging = CFBooleanGetValue(isCharging);
-    return true;
-  }
+	if (CFArrayGetCount(powerSourcesList)) {
+		CFDictionaryRef powerSourceInfo = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, 0));
 
-  return false;
+		CFNumberRef capacityRef = (CFNumberRef)CFDictionaryGetValue(powerSourceInfo, CFSTR("Current Capacity"));
+		uint32_t capacity;
+		if (!CFNumberGetValue(capacityRef, kCFNumberSInt32Type, &capacity)) return false;
+
+		CFBooleanRef isCharging = (CFBooleanRef) CFDictionaryGetValue(powerSourceInfo, CFSTR("Is Charging"));
+		info->level = capacity;
+		info->charging = CFBooleanGetValue(isCharging);
+		return true;
+	}
+
+	return false;
 }
 
 NSString *idToContainer(char *bundle)
@@ -138,6 +139,7 @@ void mediaCallback() {
       NSString *album = item.metadata.albumName;
       if (!album) album = @"";
       NSLog(@"playing %@", item.nowPlayingInfo);
+	  CURRENT_MEDIA_POSITION = item.metadata.calculatedPlaybackPosition;
       kdeconnect_add_player(
         title.UTF8String,
         artist.UTF8String,
@@ -185,7 +187,7 @@ void gone_callback(char *device_id) {
 
 bool pairing_callback(char* device_id, char* device_key) {
   KConnectFfiDevice_t *device_by_id = kdeconnect_get_device_by_id(device_id);
-  if (device_by_id) {
+	if (device_by_id) {
     NSLog(@"retrieved device that wants to pair: %s", device_by_id->name);
 
     NSString *devName = [NSString stringWithUTF8String:device_by_id->name];
@@ -338,6 +340,47 @@ void player_callback(char *device_id) {
   kdeconnect_free_string(device_id);
 }
 
+void player_action_callback(KConnectMprisPlayerAction_t action, int64_t val) {
+	NSLog(@"got action %d %lld", action, val);
+	switch (action) {
+		case K_CONNECT_MPRIS_PLAYER_ACTION_SEEK:
+			MRMediaRemoteSetElapsedTime(CURRENT_MEDIA_POSITION + (((double)val) / 1000.0f));
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_VOLUME:
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_LOOP_STATUS_NONE:
+			MRMediaRemoteSetRepeatMode(0);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_LOOP_STATUS_TRACK:
+			MRMediaRemoteSetRepeatMode(1);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_LOOP_STATUS_PLAYLIST:
+			MRMediaRemoteSetRepeatMode(2);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_POSITION:
+			MRMediaRemoteSetElapsedTime(((double)val) / 1000.0f);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_PLAY:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandPlay, nil);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_PAUSE:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandPause, nil);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_PLAY_PAUSE:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandTogglePlayPause, nil);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_STOP:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandStop, nil);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_NEXT:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandNextTrack, nil);
+			break;
+		case K_CONNECT_MPRIS_PLAYER_ACTION_PREVIOUS:
+			MRMediaRemoteSendCommand(MRMediaRemoteCommandPreviousTrack, nil);
+			break;
+	}
+}
+
 int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
   @autoreleasepool {
     KDECONNECT_DATA_PATH = @"/var/mobile/kdeconnect";
@@ -453,6 +496,7 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
     kdeconnect_register_open_url_callback(open_url_callback);
     kdeconnect_register_open_text_callback(open_text_callback);
     kdeconnect_register_player_change_callback(player_callback);
+	kdeconnect_register_player_action_callback(player_action_callback);
 
     NSThread *kdeconnect_thread = [[NSThread alloc] initWithBlock:^void() {
       bool res = kdeconnect_start(

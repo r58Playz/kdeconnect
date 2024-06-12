@@ -1,6 +1,8 @@
 use safer_ffi::{ffi_export, prelude::*};
 use std::sync::Arc;
 
+use crate::device::KConnectMprisPlayerAction;
+
 pub struct KConnectCallbacks {
     pub initialized: Option<Arc<dyn Fn() + Sync + Send>>,
     pub discovered: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
@@ -11,6 +13,7 @@ pub struct KConnectCallbacks {
     pub pairing_requested: Option<Arc<dyn Fn(char_p::Box, char_p::Box) -> bool + Sync + Send>>,
     pub find_requested: Option<Arc<dyn Fn() + Sync + Send>>,
     pub volume_change_requested: Option<Arc<dyn Fn(i32) + Sync + Send>>,
+    pub player_change_requested: Option<Arc<dyn Fn(KConnectMprisPlayerAction, i64) + Sync + Send>>,
 
     pub pair_status_changed: Option<Arc<dyn Fn(char_p::Box, bool) + Sync + Send>>,
     pub battery_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
@@ -43,6 +46,7 @@ impl KConnectCallbacks {
             pairing_requested: None,
             find_requested: None,
             volume_change_requested: None,
+            player_change_requested: None,
 
             open_file: None,
             open_url: None,
@@ -209,4 +213,12 @@ callback!(
     extern "C" fn(char_p::Box) -> (),
     player_changed,
     x
+);
+
+callback!(
+    kdeconnect_register_player_action_callback,
+    extern "C" fn(KConnectMprisPlayerAction, i64) -> (),
+    player_change_requested,
+    x,
+    y
 );
