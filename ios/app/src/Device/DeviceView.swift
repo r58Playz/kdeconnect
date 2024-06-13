@@ -26,6 +26,9 @@ struct ConnectedDeviceView: View {
         Button("Mousepad") {
             requestMousepadAction(device.id.wrappedValue, "", 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 15 as NSNumber, 15 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber)
         }
+        NavigationLink("Commands") {
+            CommandsView(device: device, refresh: { refresh() })
+        }
     }
 
     @ViewBuilder var actions: some View {
@@ -139,6 +142,7 @@ struct ConnectedDeviceView: View {
         .onAppear {
             requestVolume(device.id.wrappedValue)
             requestPlayers(device.id.wrappedValue)
+            requestCommands(device.id.wrappedValue)
         }
     }
 }

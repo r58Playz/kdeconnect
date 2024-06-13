@@ -21,6 +21,7 @@ pub struct KConnectCallbacks {
     pub connectivity_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub volume_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub player_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
+    pub commands_changed: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
 
     pub open_file: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
     pub open_url: Option<Arc<dyn Fn(char_p::Box) + Sync + Send>>,
@@ -42,6 +43,7 @@ impl KConnectCallbacks {
             connectivity_changed: None,
             volume_changed: None,
             player_changed: None,
+            commands_changed: None,
 
             pairing_requested: None,
             find_requested: None,
@@ -221,4 +223,11 @@ callback!(
     player_change_requested,
     x,
     y
+);
+
+callback!(
+    kdeconnect_register_commands_callback,
+    extern "C" fn(char_p::Box) -> (),
+    commands_changed,
+    x
 );

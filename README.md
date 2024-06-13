@@ -33,8 +33,8 @@ KDE Connect implementation in Rust and application for jailbroken/TrollStore iOS
  - [ ] `kdeconnect.notification.request`
  - [x] `kdeconnect.ping`
  - [x] `kdeconnect.presenter` (ios client does not support incoming)
- - [ ] `kdeconnect.runcommand`
- - [ ] `kdeconnect.runcommand.request`
+ - [x] `kdeconnect.runcommand` (ios client does not support outgoing)
+ - [x] `kdeconnect.runcommand.request` (ios client does not support incoming)
  - [ ] `kdeconnect.sftp`
  - [ ] `kdeconnect.sftp.request`
  - [x] `kdeconnect.share.request`

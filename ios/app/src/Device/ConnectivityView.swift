@@ -23,7 +23,7 @@ struct SignalStrengthIndicator: View {
             ForEach(0..<totalBars) { bar in
                 RoundedRectangle(cornerRadius: 4)
                     .divided(amount: (CGFloat(bar) + 1) / CGFloat(self.totalBars))
-                    .fill(Color.primary.opacity(bar < self.bars ? 1 : 0.3))
+                    .fill(Color.uikitLabel.opacity(bar < self.bars ? 1 : 0.3))
             }
         }
     }

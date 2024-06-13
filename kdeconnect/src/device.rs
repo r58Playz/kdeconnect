@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     future::Future,
     net::IpAddr,
     os::unix::fs::MetadataExt,
@@ -37,8 +38,8 @@ use crate::{
         ConnectivityReportRequest, DeviceType, FindPhone, Identity, MousepadEcho,
         MousepadKeyboardState, MousepadRequest, Mpris, MprisPlayer, MprisRequest,
         MprisRequestAction, Packet, PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter,
-        ShareRequest, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
-        SystemVolumeStream,
+        RunCommand, RunCommandItem, RunCommandRequest, ShareRequest, ShareRequestFile,
+        ShareRequestUpdate, SystemVolume, SystemVolumeRequest, SystemVolumeStream,
     },
     util::{create_payload, get_payload, get_public_key, get_time_ms},
     KdeConnectError, Result,
@@ -526,15 +527,39 @@ impl Device {
                                     handler.handle_mpris_player_action(action).await;
                                 }
                             }
-                        },
+                        }
                         MousepadRequest::TYPE => {
-                            handler.handle_mousepad_request(json::from_value(packet.body)?).await;
-                        },
+                            handler
+                                .handle_mousepad_request(json::from_value(packet.body)?)
+                                .await;
+                        }
                         MousepadEcho::TYPE => {
-                            handler.handle_mousepad_echo(json::from_value(packet.body)?).await;
-                        },
+                            handler
+                                .handle_mousepad_echo(json::from_value(packet.body)?)
+                                .await;
+                        }
                         MousepadKeyboardState::TYPE => {
-                            handler.handle_mousepad_keyboard_state(json::from_value(packet.body)?).await;
+                            handler
+                                .handle_mousepad_keyboard_state(json::from_value(packet.body)?)
+                                .await;
+                        }
+                        RunCommand::TYPE => {
+                            let packet: RunCommand = json::from_value(packet.body)?;
+                            let list: HashMap<String, RunCommandItem> =
+                                json::from_str(&packet.command_list)?;
+                            handler.handle_command_list(list).await;
+                        }
+                        RunCommandRequest::TYPE => {
+                            let packet: RunCommandRequest = json::from_value(packet.body)?;
+                            if packet.request_command_list.unwrap_or(false) {
+                                let command_list = handler.get_command_list().await;
+                                let packet = RunCommand {
+                                    command_list: json::to_string(&command_list)?,
+                                };
+                                self.stream_w.send(make_packet_str!(packet)?).await?;
+                            } else if let Some(command_id) = packet.key {
+                                handler.handle_command_request(command_id).await;
+                            }
                         }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
@@ -870,6 +895,32 @@ impl DeviceClient {
     pub async fn send_mousepad_echo(&self, echo: MousepadRequest) -> Result<()> {
         self.send_packet(make_packet_str!(echo)?).await
     }
+
+    pub async fn send_command_list(
+        &self,
+        command_list: &HashMap<String, RunCommandItem>,
+    ) -> Result<()> {
+        let packet = RunCommand {
+            command_list: json::to_string(command_list)?,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn request_command_list(&self) -> Result<()> {
+        let packet = RunCommandRequest {
+            request_command_list: Some(true),
+            key: None,
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn run_command(&self, command_id: String) -> Result<()> {
+        let packet = RunCommandRequest {
+            request_command_list: None,
+            key: Some(command_id),
+        };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -903,6 +954,8 @@ pub trait DeviceHandler {
     async fn handle_mousepad_request(&mut self, action: MousepadRequest);
     async fn handle_mousepad_keyboard_state(&mut self, state: MousepadKeyboardState);
     async fn handle_mousepad_echo(&mut self, echo: MousepadEcho);
+    async fn handle_command_list(&mut self, command_list: HashMap<String, RunCommandItem>);
+    async fn handle_command_request(&mut self, command_id: String);
 
     async fn handle_pairing_request(&mut self) -> bool;
 
@@ -912,6 +965,7 @@ pub trait DeviceHandler {
     async fn get_system_volume(&mut self) -> Vec<SystemVolumeStream>;
     async fn get_mpris_player_list(&mut self) -> Vec<String>;
     async fn get_mpris_player(&mut self, player: String) -> Option<MprisPlayer>;
+    async fn get_command_list(&mut self) -> HashMap<String, RunCommandItem>;
 
     async fn handle_exit(&mut self);
 }

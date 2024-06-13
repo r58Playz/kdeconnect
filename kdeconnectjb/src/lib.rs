@@ -14,9 +14,10 @@ use std::{
 
 use callbacks::KConnectCallbacks;
 use device::{
-    KConnectConnectivitySignal, KConnectDevice, KConnectDeviceState, KConnectFfiDevice,
-    KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
-    KConnectMousepadRequest, KConnectMprisPlayer, KConnectMprisPlayerAction, KConnectVolumeStream,
+    KConnectCommand, KConnectConnectivitySignal, KConnectDevice, KConnectDeviceState,
+    KConnectFfiDevice, KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType,
+    KConnectHandler, KConnectMousepadRequest, KConnectMprisPlayer, KConnectMprisPlayerAction,
+    KConnectVolumeStream,
 };
 use kdeconnect::{
     config::FsConfig,
@@ -26,7 +27,7 @@ use kdeconnect::{
         ConnectivityReportNetworkType, ConnectivityReportRequest, ConnectivityReportSignal,
         FindPhone, MousepadEcho, MousepadKeyboardState, MousepadRequest, MousepadSpecialKey, Mpris,
         MprisAction, MprisLoopStatus, MprisPlayer, MprisRequest, MprisRequestAction, Ping,
-        Presenter, ShareRequest, SystemVolume, SystemVolumeRequest,
+        Presenter, RunCommand, RunCommandRequest, ShareRequest, SystemVolume, SystemVolumeRequest,
     },
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
@@ -162,6 +163,8 @@ pub extern "C" fn kdeconnect_start(
                     MousepadRequest::TYPE.to_string(),
                     MousepadEcho::TYPE.to_string(),
                     MousepadKeyboardState::TYPE.to_string(),
+                    RunCommand::TYPE.to_string(),
+                    RunCommandRequest::TYPE.to_string(),
                 ],
                 config_provider.clone(),
             )
@@ -1020,6 +1023,55 @@ pub extern "C" fn kdeconnect_device_request_mousepad(
                 .await
         })
         .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_request_commands(device: &KConnectFfiDevice) -> bool {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.request_command_list().await })
+            .is_ok()
+    } else {
+        false
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_get_commands(
+    device: &KConnectFfiDevice,
+) -> repr_c::Vec<KConnectCommand> {
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            let mut out = Vec::new();
+
+            for command in device.state.state.lock().await.commands.iter() {
+                out.push(KConnectCommand {
+                    id: command.0.clone().try_into().unwrap(),
+                    name: command.1.name.clone().try_into().unwrap(),
+                    command: command.1.command.clone().try_into().unwrap(),
+                });
+            }
+
+            Ok::<Vec<_>, KdeConnectError>(out)
+        })
+        .unwrap_or_default()
+        .into()
+    } else {
+        vec![].into()
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_run_command(
+    device: &KConnectFfiDevice,
+    id: char_p::Ref<'_>,
+) -> bool {
+    let id = id.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async { device.state.client.run_command(id).await })
+            .is_ok()
     } else {
         false
     }

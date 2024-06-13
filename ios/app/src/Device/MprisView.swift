@@ -128,7 +128,7 @@ struct MprisPlayersView: View {
                     MprisView(player: $player, id: device.id)
                 } else {
                     Section(player.id) {
-                        Text("This player does not have length information, so it has been hidden.").padding(.vertical, 4)
+                        Text("This player does not have length information.").padding(.vertical, 4)
                     }
                 }
             }

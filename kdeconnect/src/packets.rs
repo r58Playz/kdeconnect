@@ -23,6 +23,8 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     MousepadRequest::TYPE,
     MousepadEcho::TYPE,
     MousepadKeyboardState::TYPE,
+    RunCommand::TYPE,
+    RunCommandRequest::TYPE,
 ];
 
 macro_rules! derive_type {
@@ -547,6 +549,27 @@ pub struct MousepadEcho {
     pub is_ack: bool,
 }
 derive_type!(MousepadEcho, "kdeconnect.mousepad.echo");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RunCommand {
+    #[serde(rename = "commandList")]
+    pub command_list: String,
+}
+derive_type!(RunCommand, "kdeconnect.runcommand");
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RunCommandItem {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RunCommandRequest {
+    pub key: Option<String>,
+    #[serde(rename = "requestCommandList")]
+    pub request_command_list: Option<bool>,
+}
+derive_type!(RunCommandRequest, "kdeconnect.runcommand.request");
 
 // to_value should never fail, as Serialize will always be successful and packets should never
 // contain non-string keys anyway

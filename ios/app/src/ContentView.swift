@@ -146,6 +146,12 @@ struct ConnectedDeviceMprisPlayer: Identifiable, Equatable, Hashable {
     var loopStatus: ConnectedDeviceMprisPlayerLoop
 }
 
+struct ConnectedDeviceCommand: Identifiable, Equatable, Hashable {
+    var id: String
+    var name: String
+    var command: String
+}
+
 struct ConnectedDevice: Identifiable, Equatable {
     var name: String
     var id: String
@@ -158,6 +164,7 @@ struct ConnectedDevice: Identifiable, Equatable {
     var connectivity: [ConnectedDeviceConnectivitySignal]
     var volume: [ConnectedDeviceVolumeStream]
     var player: [ConnectedDeviceMprisPlayer]
+    var command: [ConnectedDeviceCommand]
 }
 
 func batteryToSFSymbol(device: Binding<ConnectedDevice>) -> String {
@@ -279,6 +286,16 @@ struct ContentView: View {
         }
     }
 
+    func parseCommand(dict: NSDictionary) throws -> ConnectedDeviceCommand {
+        if let id = dict.value(forKey: "id") as? String,
+            let name = dict.value(forKey: "name") as? String,
+            let command = dict.value(forKey: "command") as? String {
+            return ConnectedDeviceCommand(id: id, name: name, command: command)
+        } else {
+            throw "Error parsing connected device connectivity"
+        }
+    }
+
     func refreshConnectedDevices() throws {
         guard let connectedArr = getConnectedDevices() as? [NSDictionary] else {
             throw "Error getting connected devices"
@@ -295,10 +312,12 @@ struct ContentView: View {
                 let connectivity = $0.value(forKey: "connectivity") as? [NSDictionary],
                 let volume = $0.value(forKey: "volume") as? [NSDictionary],
                 let player = $0.value(forKey: "player") as? [NSDictionary],
+                let command = $0.value(forKey: "command") as? [NSDictionary],
                 let parsedType = DeviceType(rawValue: type),
                 let parsedConnectivity = try? connectivity.map({ try parseConnectivity(dict: $0) }),
                 let parsedVolume = try? volume.map({ try parseVolume(dict: $0) }),
-                let parsedPlayer = try? player.map({ try parsePlayer(dict: $0) }) {
+                let parsedPlayer = try? player.map({ try parsePlayer(dict: $0) }),
+                let parsedCommand = try? command.map({ try parseCommand(dict: $0) }) {
                     let device = ConnectedDevice(
                         name: name,
                         id: id,
@@ -310,7 +329,8 @@ struct ContentView: View {
                         clipboard: clipboard,
                         connectivity: parsedConnectivity,
                         volume: parsedVolume,
-                        player: parsedPlayer
+                        player: parsedPlayer,
+                        command: parsedCommand
                     )
                     return device
             } else {

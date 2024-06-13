@@ -17,8 +17,8 @@ use kdeconnect::{
     packets::{
         Battery, ConnectivityReport, DeviceType, MousepadEcho, MousepadKeyboardState,
         MousepadRequest, MprisAction, MprisLoopStatus, MprisPlayer, MprisRequestAction, Ping,
-        Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
-        SystemVolumeStream,
+        Presenter, RunCommandItem, ShareRequestFile, ShareRequestUpdate, SystemVolume,
+        SystemVolumeRequest, SystemVolumeStream,
     },
     KdeConnectError,
 };
@@ -43,6 +43,7 @@ pub struct KConnectDeviceState {
     pub connectivity: Option<ConnectivityReport>,
     pub systemvolume: Option<Vec<SystemVolumeStream>>,
     pub players: HashMap<String, (MprisPlayer, Option<String>, Option<JoinHandle<()>>)>,
+    pub commands: HashMap<String, RunCommandItem>,
 }
 
 pub struct KConnectDevice {
@@ -486,6 +487,16 @@ impl DeviceHandler for KConnectHandler {
     async fn handle_mousepad_keyboard_state(&mut self, _: MousepadKeyboardState) {}
     async fn handle_mousepad_echo(&mut self, _: MousepadEcho) {}
 
+    async fn handle_command_list(&mut self, command_list: HashMap<String, RunCommandItem>) {
+        self.state.lock().await.commands = command_list;
+        let id = self.id.clone();
+        call_callback_no_ret!(commands_changed, id);
+    }
+
+    async fn handle_command_request(&mut self, _: String) {
+        // TODO
+    }
+
     async fn handle_pairing_request(&mut self) -> bool {
         info!("recieved pair from {:?}", self.config);
         let id = self.id.clone();
@@ -572,6 +583,11 @@ impl DeviceHandler for KConnectHandler {
             .retain(|x| x.config.id != self.config.id);
         let id = self.id.clone();
         call_callback_no_ret!(gone, id);
+    }
+
+    async fn get_command_list(&mut self) -> HashMap<String, RunCommandItem> {
+        // TODO
+        HashMap::new()
     }
 }
 
@@ -739,4 +755,12 @@ pub struct KConnectMousepadRequest<'a> {
     pub singlerelease: bool,
 
     pub send_ack: bool,
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectCommand {
+    pub id: char_p::Box,
+    pub name: char_p::Box,
+    pub command: char_p::Box,
 }

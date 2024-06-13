@@ -22,6 +22,8 @@ void requestPlayers(NSString *id);
 void requestPlayer(NSString *id, NSString *playerId);
 void requestPlayerAction(NSString *id, NSString *playerId, NSNumber *action, NSNumber *val);
 void requestMousepadAction(NSString *id, NSString *key, NSNumber *alt, NSNumber *ctrl, NSNumber *shift, NSNumber *dx, NSNumber *dy, NSNumber *scroll, NSNumber *singleclick, NSNumber *doubleclick, NSNumber *middleclick, NSNumber *rightclick, NSNumber *singlehold, NSNumber *singlerelease);
+void requestCommands(NSString *id);
+void runCommand(NSString *id, NSString *commandId);
 void sendExit();
 
 @class KConnectSwiftServer;

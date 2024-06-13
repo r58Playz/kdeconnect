@@ -60,6 +60,17 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 	}
 	kdeconnect_free_players(players);
 
+	NSMutableArray *commandArr = [NSMutableArray new];
+	Vec_KConnectCommand_t commands = kdeconnect_device_get_commands(device);
+	for (int i = 0; i < commands.len; i++) {
+		KConnectCommand_t *command = &commands.ptr[i];
+		[commandArr addObject:@{
+										@"id": [NSString stringWithUTF8String:command->id],
+									@"name": [NSString stringWithUTF8String:command->name],
+							 @"command": [NSString stringWithUTF8String:command->command],
+		}];
+	}
+
   return @{
                           @"id": [NSString stringWithUTF8String:device->id],
                         @"name": [NSString stringWithUTF8String:device->name],
@@ -72,6 +83,7 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
                 @"connectivity": connectivity,
                       @"volume": volume,
 											@"player": player,
+										 @"command": commandArr,
   };
 }
 
@@ -108,6 +120,8 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 		[messagingCenter registerForMessageName:@"get_players" target:self selector:@selector(requestPlayers:userInfo:)];
 		[messagingCenter registerForMessageName:@"request_player_action" target:self selector:@selector(requestPlayerAction:userInfo:)];
 		[messagingCenter registerForMessageName:@"request_mousepad_action" target:self selector:@selector(requestMousepad:userInfo:)];
+		[messagingCenter registerForMessageName:@"get_commands" target:self selector:@selector(requestCommands:userInfo:)];
+		[messagingCenter registerForMessageName:@"run_command" target:self selector:@selector(runCommand:userInfo:)];
 		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
@@ -296,6 +310,23 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 			.send_ack = false,
 		};
     kdeconnect_device_request_mousepad(device, request);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)requestCommands:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_request_commands(device);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)runCommand:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+	NSString *commandId = (NSString*)[userInfo objectForKey:@"command_id"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+    kdeconnect_device_run_command(device, [commandId UTF8String]);
     kdeconnect_free_device(device);
   }
 }

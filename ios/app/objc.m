@@ -120,6 +120,14 @@ void requestMousepadAction(NSString *id, NSString *key, NSNumber *alt, NSNumber 
 	[daemonMessageCenter sendMessageAndReceiveReplyName:@"request_mousepad_action" userInfo:@{@"id":id, @"key":key, @"alt":alt, @"ctrl":ctrl, @"shift":shift, @"dx":dx, @"dy":dy, @"scroll":scroll, @"singleclick":singleclick, @"doubleclick":doubleclick, @"middleclick":middleclick, @"rightclick":rightclick, @"singlehold":singlehold, @"singlerelease":singlerelease}];
 }
 
+void requestCommands(NSString *id) {
+  [daemonMessageCenter sendMessageAndReceiveReplyName:@"get_commands" userInfo:@{@"id":id}];
+}
+
+void runCommand(NSString *id, NSString *commandId) {
+	[daemonMessageCenter sendMessageAndReceiveReplyName:@"run_command" userInfo:@{@"id":id, @"command_id":commandId}];
+}
+
 void sendExit() {
   [daemonMessageCenter sendMessageName:@"killyourself" userInfo:nil];
 }

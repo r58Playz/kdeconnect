@@ -13,12 +13,12 @@ use std::{
 };
 
 use config::ConfigProvider;
-use device::{Device, DeviceClient};
+use device::{create_device, Device, DeviceClient};
+use packets::{DeviceType, Identity, Packet, PacketType, PROTOCOL_VERSION};
+use util::NoCertificateVerification;
+
 use log::{debug, error, info};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use packets::{
-    DeviceType, Identity, MousepadEcho, MousepadKeyboardState, MousepadRequest, Packet, PacketType,
-};
 use rcgen::KeyPair;
 use thiserror::Error;
 use tokio::{
@@ -39,16 +39,6 @@ use tokio_rustls::{
     TlsAcceptor, TlsConnector,
 };
 use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
-
-use crate::{
-    device::create_device,
-    packets::{
-        Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
-        ConnectivityReportRequest, FindPhone, Mpris, MprisRequest, Ping, Presenter, ShareRequest,
-        SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION,
-    },
-    util::NoCertificateVerification,
-};
 
 #[derive(Error, Debug)]
 pub enum KdeConnectError {
