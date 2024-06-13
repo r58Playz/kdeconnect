@@ -5,6 +5,26 @@ use serde_json::Value;
 
 pub const PROTOCOL_VERSION: usize = 7;
 
+pub const ALL_CAPABILITIES: &[&str] = &[
+    Ping::TYPE,
+    Battery::TYPE,
+    BatteryRequest::TYPE,
+    Clipboard::TYPE,
+    ClipboardConnect::TYPE,
+    FindPhone::TYPE,
+    ConnectivityReport::TYPE,
+    ConnectivityReportRequest::TYPE,
+    Presenter::TYPE,
+    SystemVolume::TYPE,
+    SystemVolumeRequest::TYPE,
+    ShareRequest::TYPE,
+    Mpris::TYPE,
+    MprisRequest::TYPE,
+    MousepadRequest::TYPE,
+    MousepadEcho::TYPE,
+    MousepadKeyboardState::TYPE,
+];
+
 macro_rules! derive_type {
     ($struct:ty, $type:literal) => {
         impl PacketType for $struct {
