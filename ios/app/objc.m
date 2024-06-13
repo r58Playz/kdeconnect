@@ -116,6 +116,10 @@ void requestPlayerAction(NSString *id, NSString *playerId, NSNumber *action, NSN
 	[daemonMessageCenter sendMessageAndReceiveReplyName:@"request_player_action" userInfo:@{@"id":id, @"player_id":playerId, @"player_action":action, @"player_action_int":val}];
 }
 
+void requestMousepadAction(NSString *id, NSString *key, NSNumber *alt, NSNumber *ctrl, NSNumber *shift, NSNumber *dx, NSNumber *dy, NSNumber *scroll, NSNumber *singleclick, NSNumber *doubleclick, NSNumber *middleclick, NSNumber *rightclick, NSNumber *singlehold, NSNumber *singlerelease) {
+	[daemonMessageCenter sendMessageAndReceiveReplyName:@"request_mousepad_action" userInfo:@{@"id":id, @"key":key, @"alt":alt, @"ctrl":ctrl, @"shift":shift, @"dx":dx, @"dy":dy, @"scroll":scroll, @"singleclick":singleclick, @"doubleclick":doubleclick, @"middleclick":middleclick, @"rightclick":rightclick, @"singlehold":singlehold, @"singlerelease":singlerelease}];
+}
+
 void sendExit() {
   [daemonMessageCenter sendMessageName:@"killyourself" userInfo:nil];
 }

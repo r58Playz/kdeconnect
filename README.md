@@ -1,7 +1,7 @@
 # kdeconnectjb
 KDE Connect implementation in Rust and application for jailbroken/TrollStore iOS
 
-## Building
+## Building (the app)
 1. Install [Theos](https://theos.dev)
 2. Set up building Rust for iOS; make sure `cargo build --target aarch64-apple-ios` works for a clean Rust project
 3. Run `./make.sh do` in `kdeconnectjb` directory to build for iOS and deploy to your configured Theos device
@@ -22,17 +22,17 @@ KDE Connect implementation in Rust and application for jailbroken/TrollStore iOS
  - [x] `kdeconnect.findmyphone.request`
  - [ ] `kdeconnect.lock`
  - [ ] `kdeconnect.lock.request`
- - [ ] `kdeconnect.mousepad.echo`
- - [ ] `kdeconnect.mousepad.keyboardstate`
- - [ ] `kdeconnect.mousepad.request`
- - [x] `kdeconnect.mpris` (buggy)
- - [x] `kdeconnect.mpris.request` (buggy)
+ - [x] `kdeconnect.mousepad.echo`
+ - [x] `kdeconnect.mousepad.keyboardstate` (ios client does not support outgoing)
+ - [x] `kdeconnect.mousepad.request` (ios client does not support incoming)
+ - [x] `kdeconnect.mpris` (ios client buggy)
+ - [x] `kdeconnect.mpris.request` (ios client buggy)
  - [ ] `kdeconnect.notification`
  - [ ] `kdeconnect.notification.action`
  - [ ] `kdeconnect.notification.reply`
  - [ ] `kdeconnect.notification.request`
  - [x] `kdeconnect.ping`
- - [x] `kdeconnect.presenter`
+ - [x] `kdeconnect.presenter` (ios client does not support incoming)
  - [ ] `kdeconnect.runcommand`
  - [ ] `kdeconnect.runcommand.request`
  - [ ] `kdeconnect.sftp`

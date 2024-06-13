@@ -16,14 +16,15 @@ use callbacks::KConnectCallbacks;
 use device::{
     KConnectConnectivitySignal, KConnectDevice, KConnectDeviceState, KConnectFfiDevice,
     KConnectFfiDeviceInfo, KConnectFfiDeviceState, KConnectFfiDeviceType, KConnectHandler,
-    KConnectMprisPlayer, KConnectMprisPlayerAction, KConnectVolumeStream,
+    KConnectMousepadRequest, KConnectMprisPlayer, KConnectMprisPlayerAction, KConnectVolumeStream,
 };
 use kdeconnect::{
     config::FsConfig,
     device::DeviceFile,
     packets::{
         Battery, ConnectivityReport, ConnectivityReportNetworkType, ConnectivityReportSignal,
-        MprisAction, MprisLoopStatus, MprisPlayer, MprisRequestAction, Presenter,
+        MousepadRequest, MousepadSpecialKey, MprisAction, MprisLoopStatus, MprisPlayer,
+        MprisRequestAction, Presenter,
     },
     KdeConnect, KdeConnectClient, KdeConnectError,
 };
@@ -893,6 +894,92 @@ pub extern "C" fn kdeconnect_device_request_player_action(
                 },
             };
             device.state.client.request_mpris_action(action).await
+        })
+        .is_ok()
+    } else {
+        false
+    }
+}
+
+fn translate_u8_to_special_key(key: u8) -> Option<MousepadSpecialKey> {
+    use MousepadSpecialKey as K;
+    match key {
+        1 => Some(K::Backspace),
+        2 => Some(K::Tab),
+        4 => Some(K::DpadLeft),
+        5 => Some(K::DpadUp),
+        6 => Some(K::DpadRight),
+        7 => Some(K::DpadDown),
+        8 => Some(K::PageUp),
+        9 => Some(K::PageDown),
+        10 => Some(K::Home),
+        11 => Some(K::End),
+        12 => Some(K::Enter),
+        13 => Some(K::Delete),
+        14 => Some(K::Escape),
+        15 => Some(K::SysRq),
+        16 => Some(K::ScrollLock),
+        21 => Some(K::F1),
+        22 => Some(K::F2),
+        23 => Some(K::F3),
+        24 => Some(K::F4),
+        25 => Some(K::F5),
+        26 => Some(K::F6),
+        27 => Some(K::F7),
+        28 => Some(K::F8),
+        29 => Some(K::F9),
+        30 => Some(K::F10),
+        31 => Some(K::F11),
+        32 => Some(K::F12),
+        _ => None,
+    }
+}
+
+fn bool_to_option(bool: bool) -> Option<bool> {
+    if bool {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+#[ffi_export]
+pub extern "C" fn kdeconnect_device_request_mousepad(
+    device: &KConnectFfiDevice,
+    mousepad: KConnectMousepadRequest<'_>,
+) -> bool {
+    let key = mousepad.key.to_string();
+    if let Ok(rt) = build_runtime!() {
+        rt.block_on(async {
+            device
+                .state
+                .client
+                .request_mousepad_action(MousepadRequest {
+                    key: if key.is_empty() { None } else { Some(key) },
+                    special_key: translate_u8_to_special_key(mousepad.special_key),
+                    alt: bool_to_option(mousepad.alt),
+                    ctrl: bool_to_option(mousepad.ctrl),
+                    shift: bool_to_option(mousepad.shift),
+                    dx: if mousepad.dx == 0.0 {
+                        None
+                    } else {
+                        Some(mousepad.dx)
+                    },
+                    dy: if mousepad.dy == 0.0 {
+                        None
+                    } else {
+                        Some(mousepad.dy)
+                    },
+                    scroll: bool_to_option(mousepad.scroll),
+                    singleclick: bool_to_option(mousepad.singleclick),
+                    doubleclick: bool_to_option(mousepad.doubleclick),
+                    middleclick: bool_to_option(mousepad.middleclick),
+                    rightclick: bool_to_option(mousepad.rightclick),
+                    singlehold: bool_to_option(mousepad.singlehold),
+                    singlerelease: bool_to_option(mousepad.singlerelease),
+                    send_ack: bool_to_option(mousepad.send_ack),
+                })
+                .await
         })
         .is_ok()
     } else {

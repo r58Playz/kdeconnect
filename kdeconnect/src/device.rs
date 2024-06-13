@@ -34,10 +34,11 @@ use crate::{
     make_packet, make_packet_payload, make_packet_str, make_packet_str_payload,
     packets::{
         Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
-        ConnectivityReportRequest, DeviceType, FindPhone, Identity, Mpris, MprisPlayer,
-        MprisRequest, MprisRequestAction, Packet, PacketPayloadTransferInfo, PacketType, Pair,
-        Ping, Presenter, ShareRequest, ShareRequestFile, ShareRequestUpdate, SystemVolume,
-        SystemVolumeRequest, SystemVolumeStream,
+        ConnectivityReportRequest, DeviceType, FindPhone, Identity, MousepadEcho,
+        MousepadKeyboardState, MousepadRequest, Mpris, MprisPlayer, MprisRequest,
+        MprisRequestAction, Packet, PacketPayloadTransferInfo, PacketType, Pair, Ping, Presenter,
+        ShareRequest, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
+        SystemVolumeStream,
     },
     util::{create_payload, get_payload, get_public_key, get_time_ms},
     KdeConnectError, Result,
@@ -525,6 +526,15 @@ impl Device {
                                     handler.handle_mpris_player_action(action).await;
                                 }
                             }
+                        },
+                        MousepadRequest::TYPE => {
+                            handler.handle_mousepad_request(json::from_value(packet.body)?).await;
+                        },
+                        MousepadEcho::TYPE => {
+                            handler.handle_mousepad_echo(json::from_value(packet.body)?).await;
+                        },
+                        MousepadKeyboardState::TYPE => {
+                            handler.handle_mousepad_keyboard_state(json::from_value(packet.body)?).await;
                         }
                         _ => error!(
                             "unknown type {:?}, ignoring: {:#?}",
@@ -847,6 +857,19 @@ impl DeviceClient {
         let packet = MprisRequest::Action(action);
         self.send_packet(make_packet_str!(packet)?).await
     }
+
+    pub async fn request_mousepad_action(&self, action: MousepadRequest) -> Result<()> {
+        self.send_packet(make_packet_str!(action)?).await
+    }
+
+    pub async fn send_mousepad_keyboard_state(&self) -> Result<()> {
+        let packet = MousepadKeyboardState { state: true };
+        self.send_packet(make_packet_str!(packet)?).await
+    }
+
+    pub async fn send_mousepad_echo(&self, echo: MousepadRequest) -> Result<()> {
+        self.send_packet(make_packet_str!(echo)?).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -877,6 +900,9 @@ pub trait DeviceHandler {
         art: Pin<Box<dyn AsyncRead + Sync + Send>>,
     );
     async fn handle_mpris_player_action(&mut self, action: MprisRequestAction);
+    async fn handle_mousepad_request(&mut self, action: MousepadRequest);
+    async fn handle_mousepad_keyboard_state(&mut self, state: MousepadKeyboardState);
+    async fn handle_mousepad_echo(&mut self, echo: MousepadEcho);
 
     async fn handle_pairing_request(&mut self) -> bool;
 

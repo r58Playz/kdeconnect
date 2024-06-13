@@ -107,6 +107,7 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
 		[messagingCenter registerForMessageName:@"share_files" target:self selector:@selector(shareFiles:userInfo:)];
 		[messagingCenter registerForMessageName:@"get_players" target:self selector:@selector(requestPlayers:userInfo:)];
 		[messagingCenter registerForMessageName:@"request_player_action" target:self selector:@selector(requestPlayerAction:userInfo:)];
+		[messagingCenter registerForMessageName:@"request_mousepad_action" target:self selector:@selector(requestMousepad:userInfo:)];
 		[messagingCenter registerForMessageName:@"killyourself" target:self selector:@selector(kill:)];
     NSLog(@"registered CPDistributedMessagingCenter"); 
 	}
@@ -256,6 +257,45 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
   KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
   if (device) {
     kdeconnect_device_request_player_action(device, [playerid UTF8String], [playeraction intValue], [playeractionint intValue]);
+    kdeconnect_free_device(device);
+  }
+}
+- (void)requestMousepad:(NSString *)name userInfo:(NSDictionary*)userInfo {
+  NSString *id = (NSString*)[userInfo objectForKey:@"id"];
+	NSString *key = (NSString*)[userInfo objectForKey:@"key"];
+	NSNumber *special_key = (NSNumber*)[userInfo objectForKey:@"special_key"];
+	NSNumber *alt = (NSNumber*)[userInfo objectForKey:@"alt"];
+	NSNumber *ctrl = (NSNumber*)[userInfo objectForKey:@"ctrl"];
+	NSNumber *shift = (NSNumber*)[userInfo objectForKey:@"shift"];
+	NSNumber *dx = (NSNumber*)[userInfo objectForKey:@"dx"];
+	NSNumber *dy = (NSNumber*)[userInfo objectForKey:@"dy"];
+	NSNumber *scroll = (NSNumber*)[userInfo objectForKey:@"scroll"];
+	NSNumber *singleclick = (NSNumber*)[userInfo objectForKey:@"singleclick"];
+	NSNumber *doubleclick = (NSNumber*)[userInfo objectForKey:@"doubleclick"];
+	NSNumber *middleclick = (NSNumber*)[userInfo objectForKey:@"middleclick"];
+	NSNumber *rightclick = (NSNumber*)[userInfo objectForKey:@"rightclick"];
+	NSNumber *singlehold = (NSNumber*)[userInfo objectForKey:@"singlehold"];
+	NSNumber *singlerelease = (NSNumber*)[userInfo objectForKey:@"singlerelease"];
+  KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
+  if (device) {
+		KConnectMousepadRequest_t request = {
+			.key = [key UTF8String],
+			.special_key = [special_key intValue],
+			.alt = [alt boolValue],
+			.ctrl = [ctrl boolValue],
+			.shift = [shift boolValue],
+			.dx = [dx floatValue],
+			.dy = [dy floatValue],
+			.scroll = [scroll boolValue],
+			.singleclick = [singleclick boolValue],
+			.doubleclick = [doubleclick boolValue],
+			.middleclick = [middleclick boolValue],
+			.rightclick = [rightclick boolValue],
+			.singlehold = [singlehold boolValue],
+			.singlerelease = [singlerelease boolValue],
+			.send_ack = false,
+		};
+    kdeconnect_device_request_mousepad(device, request);
     kdeconnect_free_device(device);
   }
 }

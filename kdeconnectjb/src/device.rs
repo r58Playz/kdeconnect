@@ -1,3 +1,5 @@
+#![allow(clippy::size_of_in_element_count)]
+
 use std::{
     collections::HashMap,
     error::Error,
@@ -13,9 +15,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kdeconnect::{
     device::{DeviceClient, DeviceConfig, DeviceHandler},
     packets::{
-        Battery, ConnectivityReport, DeviceType, MprisAction, MprisLoopStatus, MprisPlayer,
-        MprisRequestAction, Ping, Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume,
-        SystemVolumeRequest, SystemVolumeStream,
+        Battery, ConnectivityReport, DeviceType, MousepadEcho, MousepadKeyboardState,
+        MousepadRequest, MprisAction, MprisLoopStatus, MprisPlayer, MprisRequestAction, Ping,
+        Presenter, ShareRequestFile, ShareRequestUpdate, SystemVolume, SystemVolumeRequest,
+        SystemVolumeStream,
     },
     KdeConnectError,
 };
@@ -478,6 +481,11 @@ impl DeviceHandler for KConnectHandler {
         }
     }
 
+    // Ignore as there is not much use
+    async fn handle_mousepad_request(&mut self, _: MousepadRequest) {}
+    async fn handle_mousepad_keyboard_state(&mut self, _: MousepadKeyboardState) {}
+    async fn handle_mousepad_echo(&mut self, _: MousepadEcho) {}
+
     async fn handle_pairing_request(&mut self) -> bool {
         info!("recieved pair from {:?}", self.config);
         let id = self.id.clone();
@@ -709,4 +717,26 @@ pub enum KConnectMprisPlayerAction {
     Stop,
     Next,
     Previous,
+}
+
+#[derive_ReprC]
+#[repr(C)]
+pub struct KConnectMousepadRequest<'a> {
+    pub key: char_p::Ref<'a>,
+    pub special_key: u8,
+    pub alt: bool,
+    pub ctrl: bool,
+    pub shift: bool,
+
+    pub dx: f32,
+    pub dy: f32,
+    pub scroll: bool,
+    pub singleclick: bool,
+    pub doubleclick: bool,
+    pub middleclick: bool,
+    pub rightclick: bool,
+    pub singlehold: bool,
+    pub singlerelease: bool,
+
+    pub send_ack: bool,
 }

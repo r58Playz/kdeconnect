@@ -16,7 +16,9 @@ use config::ConfigProvider;
 use device::{Device, DeviceClient};
 use log::{debug, error, info};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use packets::{DeviceType, Identity, Packet, PacketType};
+use packets::{
+    DeviceType, Identity, MousepadEcho, MousepadKeyboardState, MousepadRequest, Packet, PacketType,
+};
 use rcgen::KeyPair;
 use thiserror::Error;
 use tokio::{
@@ -40,7 +42,11 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 use crate::{
     device::create_device,
-    packets::{Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport, ConnectivityReportRequest, FindPhone, Mpris, MprisRequest, Ping, Presenter, ShareRequest, SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION},
+    packets::{
+        Battery, BatteryRequest, Clipboard, ClipboardConnect, ConnectivityReport,
+        ConnectivityReportRequest, FindPhone, Mpris, MprisRequest, Ping, Presenter, ShareRequest,
+        SystemVolume, SystemVolumeRequest, PROTOCOL_VERSION,
+    },
     util::NoCertificateVerification,
 };
 
@@ -234,6 +240,9 @@ impl KdeConnect {
                 ShareRequest::TYPE.to_string(),
                 Mpris::TYPE.to_string(),
                 MprisRequest::TYPE.to_string(),
+                MousepadRequest::TYPE.to_string(),
+                MousepadEcho::TYPE.to_string(),
+                MousepadKeyboardState::TYPE.to_string(),
             ],
             outgoing_capabilities: vec![
                 Ping::TYPE.to_string(),
@@ -250,6 +259,9 @@ impl KdeConnect {
                 ShareRequest::TYPE.to_string(),
                 Mpris::TYPE.to_string(),
                 MprisRequest::TYPE.to_string(),
+                MousepadRequest::TYPE.to_string(),
+                MousepadEcho::TYPE.to_string(),
+                MousepadKeyboardState::TYPE.to_string(),
             ],
             tcp_port,
         };

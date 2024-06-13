@@ -23,6 +23,9 @@ struct ConnectedDeviceView: View {
         NavigationLink("Media") {
             MprisPlayersView(device: device, refresh: { refresh() })
         }
+        Button("Mousepad") {
+            requestMousepadAction(device.id.wrappedValue, "", 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 15 as NSNumber, 15 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber, 0 as NSNumber)
+        }
     }
 
     @ViewBuilder var actions: some View {
