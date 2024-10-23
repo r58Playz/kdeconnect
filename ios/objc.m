@@ -1,3 +1,4 @@
+#import "headers/CTCall.h"
 #import "headers/IOPSKeys.h"
 #import "headers/IOPowerSources.h"
 #import "headers/MobileGestalt.h"
@@ -11,6 +12,8 @@
 #import "headers/MRContentItem.h"
 #import "headers/MRContentItemMetadata.h"
 #import "headers/MRArtwork.h"
+#import "headers/CTTelephonyCenter.h"
+#import "headers/CTCall.h"
 
 #import "kdeconnectjb.h"
 #import "server.h"
@@ -29,6 +32,9 @@
 #import <MobileCoreServices/LSApplicationProxy.h>
 #import <FrontBoardServices/FBSSystemService.h>
 #import <MediaRemote/MediaRemote.h>
+#import <CallKit/CXCall.h>
+#import <CallKit/CXCallController.h>
+#import <CallKit/CXCallObserver.h>
 
 NSString *KDECONNECT_DATA_PATH;
 NSString *DOCS_PATH;
@@ -154,6 +160,66 @@ void mediaCallback() {
     }
   });
 }
+
+void telephonyCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+	NSLog(@"telephony info recieved %@ %@", name, userInfo);
+
+	if (CFStringCompare(name, kCTCallIdentificationChangeNotification, 0) == kCFCompareEqualTo ||
+		CFStringCompare(name, kCTCallStatusChangeNotification, 0) == kCFCompareEqualTo) {
+
+		CTCallRef call = (CTCallRef)object;
+
+		CTCallStatus callStatus = (CTCallStatus)[[(__bridge NSDictionary *)userInfo objectForKey:@"kCTCallStatus"] integerValue];
+		NSString *callName = (__bridge NSString *)CTCallCopyName(kCFAllocatorDefault, call);
+
+		NSString *callAddress = (__bridge NSString *)CTCallCopyAddress(kCFAllocatorDefault, call);
+		NSString *callCountryCode = (__bridge NSString *)CTCallCopyCountryCode(kCFAllocatorDefault, call);
+		NSString *callNetworkCode = (__bridge NSString *)CTCallCopyNetworkCode(kCFAllocatorDefault, call);
+
+		NSLog(@"recieved call status for %@: %@ %@ %@", callName, callAddress, callCountryCode, callNetworkCode);
+
+		switch (callStatus) {
+			case kCTCallStatusIncomingCall:
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, false);
+				break;
+			case kCTCallStatusIncomingCallEnded:
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, true);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_MISSED_CALL, callName.UTF8String, callAddress.UTF8String, false);
+				break;
+			case kCTCallStatusAnswered:
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, true);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_TALKING, callName.UTF8String, callAddress.UTF8String, false);
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+@interface CXCallController (Private)
+- (void)setCallObserver:(CXCallObserver *)arg1;
+@end
+
+@interface CallMonitorCallObserverDelegate : NSObject <CXCallObserverDelegate>
+@end
+
+@implementation CallMonitorCallObserverDelegate
+
+- (void)callObserver:(CXCallObserver *)callObserver callChanged:(CXCall *)call {
+	if (!call.outgoing && !call.onHold && !call.hasConnected && !call.hasEnded) {
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, "iOS CallKit App", call.UUID.UUIDString.UTF8String, false);
+	} else if (!call.outgoing && !call.onHold && call.hasConnected && !call.hasEnded) {
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, "iOS CallKit App", call.UUID.UUIDString.UTF8String, true);
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_TALKING, "iOS CallKit App", call.UUID.UUIDString.UTF8String, false);
+	} else if (!call.outgoing && !call.onHold && !call.hasConnected && call.hasEnded) {
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, "iOS CallKit App", call.UUID.UUIDString.UTF8String, true);
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_MISSED_CALL, "iOS CallKit App", call.UUID.UUIDString.UTF8String, false);
+	} else if (!call.outgoing && !call.onHold && call.hasConnected && call.hasEnded) {
+		kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_TALKING, "iOS CallKit App", call.UUID.UUIDString.UTF8String, true);
+	}
+}
+
+@end
 
 void initialized_callback() { 
   NSLog(@"initialized, sending data & telling app");
@@ -565,6 +631,18 @@ int objc_main(const char *deviceName, KConnectFfiDeviceType_t deviceType) {
     }];
 
     MRMediaRemoteRegisterForNowPlayingNotifications(dispatch_get_main_queue());
+
+	CTTelephonyCenterAddObserver(CTTelephonyCenterGetDefault(), NULL, telephonyCallback,
+		kCTCallStatusChangeNotification, NULL,
+		CFNotificationSuspensionBehaviorDeliverImmediately);
+
+	CTTelephonyCenterAddObserver(CTTelephonyCenterGetDefault(), NULL, telephonyCallback,
+		kCTCallIdentificationChangeNotification, NULL,
+		CFNotificationSuspensionBehaviorDeliverImmediately);
+
+	CXCallController *callController = [[CXCallController alloc] initWithQueue:dispatch_get_main_queue()];
+	CallMonitorCallObserverDelegate *callObserverDelegate = [CallMonitorCallObserverDelegate new];
+	[callController.callObserver setDelegate:callObserverDelegate queue:dispatch_get_main_queue()];
 
     CFRunLoopSourceRef powerLoop =
         IOPSNotificationCreateRunLoopSource(powerSourceCallback, NULL);

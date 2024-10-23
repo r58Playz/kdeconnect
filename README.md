@@ -47,5 +47,5 @@ KDE Connect implementation in Rust and application for jailbroken/TrollStore iOS
  - [ ] `kdeconnect.sms.request_conversations`
  - [x] `kdeconnect.systemvolume`
  - [x] `kdeconnect.systemvolume.request`
- - [ ] `kdeconnect.telephony`
- - [ ] `kdeconnect.telephony.request_mute`
+ - [x] `kdeconnect.telephony` (ios client does not support outgoing)
+ - [x] `kdeconnect.telephony.request_mute` (ios client does not support incoming or outgoing)
