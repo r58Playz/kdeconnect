@@ -178,17 +178,18 @@ void telephonyCallback(CFNotificationCenterRef center, void *observer, CFStringR
 
 		NSLog(@"recieved call status for %@: %@ %@ %@", callName, callAddress, callCountryCode, callNetworkCode);
 
+		if (!callAddress) return;
 		switch (callStatus) {
 			case kCTCallStatusIncomingCall:
-				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, false);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callAddress.UTF8String, callAddress.UTF8String, false);
 				break;
 			case kCTCallStatusIncomingCallEnded:
-				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, true);
-				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_MISSED_CALL, callName.UTF8String, callAddress.UTF8String, false);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callAddress.UTF8String, callAddress.UTF8String, true);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_MISSED_CALL, callAddress.UTF8String, callAddress.UTF8String, false);
 				break;
 			case kCTCallStatusAnswered:
-				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callName.UTF8String, callAddress.UTF8String, true);
-				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_TALKING, callName.UTF8String, callAddress.UTF8String, false);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_RINGING, callAddress.UTF8String, callAddress.UTF8String, true);
+				kdeconnect_send_telephony_update(K_CONNECT_TELEPHONY_EVENT_TALKING, callAddress.UTF8String, callAddress.UTF8String, false);
 				break;
 			default:
 				break;
