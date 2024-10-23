@@ -30,7 +30,7 @@ class SettingsViewModel: ObservableObject {
 }
 
 struct SettingsView: View {
-    @ObservedObject var state: SettingsViewModel = SettingsViewModel() 
+    @ObservedObject var state: SettingsViewModel
     var exit: () -> Void 
 
     var body: some View {

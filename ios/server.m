@@ -228,7 +228,7 @@ NSDictionary *getDeviceInfo(KConnectFfiDevice_t *device) {
   KConnectFfiDevice_t *device = kdeconnect_get_device_by_id([id UTF8String]);
   if (device && files.count) {
     if (files.count == 1) {
-      kdeconnect_device_share_file(device, ((NSString*)files.firstObject).UTF8String, [open boolValue]);
+      kdeconnect_device_share_file(device, ((NSString*)files.firstObject).stringByRemovingPercentEncoding.UTF8String, [open boolValue]);
     } else {
       int cnt = files.count;
       char** filesArr = calloc(cnt, sizeof(char*));

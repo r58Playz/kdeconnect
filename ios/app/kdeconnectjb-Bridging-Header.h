@@ -4,7 +4,7 @@
 #import <spawn.h>
 #import <sys/sysctl.h>
 
-int spawnRoot(NSString *path, NSArray *args);
+int spawn(NSString *path, NSArray *args);
 
 void createMessageCenter();
 NSArray *getConnectedDevices();

@@ -29,6 +29,7 @@ extension ShapeStyle where Self == Color {
 }
 
 var motionManager: CMMotionManager = CMMotionManager()
+var settingsModel: SettingsViewModel = SettingsViewModel()
 
 enum DeviceType: Int, CaseIterable, Identifiable {
     case desktop = 0
@@ -431,7 +432,7 @@ struct ContentView: View {
                     }
                     Section(header: Text("Tools")) {
                         NavigationLink("Settings") {
-                            SettingsView(exit: { exitDaemon() })
+                            SettingsView(state: settingsModel, exit: { exitDaemon() })
                         }
                         if let resourceURL = Bundle.main.resourceURL,
                             FileManager().fileExists(atPath:  resourceURL.deletingLastPathComponent().appendingPathComponent("_TrollStore").path) {
@@ -442,7 +443,7 @@ struct ContentView: View {
                                     UIApplication.shared.alert(body: "Daemon not found")
                                     return
                                 }
-                                let ret = spawnRoot(daemonPath, [])
+                                let ret = spawn(daemonPath, [])
                                 if ret != 0 {
                                     UIApplication.shared.alert(body: "Error starting daemon: \(ret)")
                                     return
@@ -456,6 +457,7 @@ struct ContentView: View {
                                 exitDaemon()
                             }
                         }
+                        Text("The daemon logs to system logs. Check system logs if you are having any issues.")
                     }
                     Section(header: Text("Info")) {
                         VStack(alignment: .leading) {

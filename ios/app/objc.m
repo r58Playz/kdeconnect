@@ -16,7 +16,7 @@ posix_spawnattr_set_persona_uid_np(const posix_spawnattr_t *__restrict, uid_t);
 extern int
 posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__restrict, uid_t);
 
-int spawnRoot(NSString *path, NSArray *args) {
+int spawn(NSString *path, NSArray *args) {
   NSMutableArray *argsM = args.mutableCopy ?: [NSMutableArray new];
   [argsM insertObject:path atIndex:0];
 
@@ -30,10 +30,6 @@ int spawnRoot(NSString *path, NSArray *args) {
 
   posix_spawnattr_t attr;
   posix_spawnattr_init(&attr);
-
-  posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
-  posix_spawnattr_set_persona_uid_np(&attr, 0);
-  posix_spawnattr_set_persona_gid_np(&attr, 0);
 
   posix_spawn_file_actions_t action;
   posix_spawn_file_actions_init(&action);
