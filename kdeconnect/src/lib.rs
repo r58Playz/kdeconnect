@@ -26,7 +26,7 @@ use tokio::{
 	net::{TcpListener, TcpStream, UdpSocket},
 	select,
 	sync::{mpsc, oneshot, Mutex},
-	time::sleep,
+	time::{interval, sleep, MissedTickBehavior},
 };
 
 use serde_json as json;
@@ -393,9 +393,11 @@ impl KdeConnect {
 		info!("broadcasting on udp");
 		// wait until everything else is ready
 		sleep(Duration::from_secs(1)).await;
+		let mut interval = interval(Duration::from_secs(30));
+		interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 		loop {
 			self.send_identity_once().await?;
-			sleep(Duration::from_secs(30)).await;
+			interval.tick().await;
 		}
 	}
 
